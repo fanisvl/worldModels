@@ -1,2 +1,4 @@
 notebooks/cifar10
 .vscode
+data/saved_rollouts
+*/__pycache__
