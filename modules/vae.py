@@ -3,16 +3,15 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 class VAE(nn.Module):
-    def __init__(self, latent_dim, in_shape=(3,64,64)):
+    def __init__(self, latent_dim):
         super().__init__()
         self.latent_dim = latent_dim
-        self.in_shape = in_shape
         
         # -- ENCODER --
         # Input:  N, 3, 64, 64
         # Output: N, 2*latent_dim (mu, log_sigma)
         self.encoder = nn.Sequential(
-            nn.Conv2d(self.in_shape[0], 32, 4, stride=2), # -> N, 32, 31, 31
+            nn.Conv2d(3, 32, 4, stride=2), # -> N, 32, 31, 31
             nn.ReLU(),
             nn.Conv2d(32, 64, 4, stride=2), # -> N, 64, 14, 14
             nn.ReLU(),
