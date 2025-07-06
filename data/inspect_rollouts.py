@@ -47,9 +47,8 @@ def inspect_data(data_dir, rollout_idx):
     titles = ['First Frame', 'Middle Frame', 'Last Frame']
     for i, (idx, title) in enumerate(zip(indices, titles)):
         axes[i].imshow(observations[idx])
-        axes[i].set_title(f"{title}\nAction: {actions[idx]}\nReward: {rewards[idx]:.2f}")
+        axes[i].set_title(f"{title}\nAction: {actions[idx]}\nReward: {rewards[idx]}")
         axes[i].axis('off')
-    plt.tight_layout()
     plt.show()
 
     # Animation of rollout        
@@ -60,12 +59,11 @@ def inspect_data(data_dir, rollout_idx):
     def animate(i):
         ax.clear()
         ax.imshow(observations[i])
-        ax.set_title(f"Frame {i}/{len(observations)-1}, Action: {actions[i]}, Reward: {rewards[i]:.2f}")
+        ax.set_title(f"Frame {i}/{len(observations)-1},\nAction: {actions[i]},\nReward: {rewards[i]}")
         ax.axis('off')
         return [ax]
     anim = animation.FuncAnimation(fig, animate, init_func=init, 
-                                    frames=len(observations), interval=50, blit=True)
-    plt.tight_layout()
+                                    frames=len(observations), interval=500, blit=False)
     plt.show()
 
     return {

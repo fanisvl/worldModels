@@ -23,8 +23,10 @@ def generate_data(rollouts, max_timesteps, data_dir='recorded_data'):
         None (saves data to disk)
     """
     os.makedirs(data_dir, exist_ok=True)
+
+    SKIP_ZOOM_TIMESTEPS = 100
     
-    env = gym.make("CarRacing-v3", render_mode="rgb_array", max_episode_steps=max_timesteps)
+    env = gym.make("CarRacing-v3", render_mode="rgb_array", max_episode_steps=max_timesteps+SKIP_ZOOM_TIMESTEPS)
     
     start = time.time()
     # *the generated track is random every episode
@@ -39,12 +41,9 @@ def generate_data(rollouts, max_timesteps, data_dir='recorded_data'):
         prev_action = np.array([0.0, 0.0, 0.0])
 
         # Skip the initial zoom-in frames
-        skip_zoom_frames = 50
-        for _ in range(skip_zoom_frames):
+        for _ in range(SKIP_ZOOM_TIMESTEPS):
             action = np.array([0.0, 0.0, 0.0])
             observation, _, terminated, truncated, _ = env.step(action)
-            if terminated or truncated:
-                observation, info = env.reset()
 
         # Run rollout for specified max timesteps or until terminated
         for t in range(max_timesteps):
@@ -55,7 +54,7 @@ def generate_data(rollouts, max_timesteps, data_dir='recorded_data'):
             observations.append(resized_obs)
             
             # random policy
-            noise_scale = 0.5  # Controls smoothness - lower is smoother
+            noise_scale = 0.75  # Controls smoothness - lower is smoother
             random_change = np.random.normal(0, noise_scale, size=3)
             action = np.clip(prev_action + random_change, [-1.0, 0.0, 0.0], [1.0, 1.0, 1.0])
             prev_action = action
@@ -95,4 +94,4 @@ if __name__ == "__main__":
     parser.add_argument('--max_ts', type=int, required=True, help='Directory to save rollout data')
     parser.add_argument('--dir', type=str, default='saved_rollouts', help='Directory to save rollout data')
     args = parser.parse_args()
-    generate_data(rollouts=100, max_timesteps=1000, data_dir=args.dir)
+    generate_data(rollouts=args.rollouts, max_timesteps=args.max_ts, data_dir=args.dir)
