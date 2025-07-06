@@ -49,7 +49,8 @@ class VAE(nn.Module):
         # decoder
         recon_x =  self.decoder(z)
 
-        return recon_x, mu, log_var
+        return recon_x, mu, log_var, z
+    
     
 def vae_loss(recon_x, x, mu, log_var):
     reconstruction_loss = F.mse_loss(recon_x, x, reduction='sum')
