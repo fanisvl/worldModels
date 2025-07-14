@@ -1,13 +1,14 @@
 import gymnasium as gym
+from vizdoom import gymnasium_wrapper
 import numpy as np
 import os
 import cv2
 from tqdm import tqdm
 import time
 
-def generate_data(rollouts, max_timesteps, data_dir='recorded_data'):
+def generate_data(rollouts, data_dir='vizdoom/recorded_data'):
     """
-    Run several rollouts in the CarRacing-v3 environment.
+    Run several rollouts in the VizdoomTakeCover-v0 environment.
     Each rollout stores:
         - observations: rendered RGB frames (3x96x96 by default, will resize to 3x64x64 to match the paper)
         - actions: actions taken at each frame
@@ -16,7 +17,6 @@ def generate_data(rollouts, max_timesteps, data_dir='recorded_data'):
         
     Args:
         rollouts: Number of episodes to run
-        max_timesteps: Maximum timesteps per episode
         data_dir: Directory to save the collected data
         
     Returns:
@@ -24,12 +24,9 @@ def generate_data(rollouts, max_timesteps, data_dir='recorded_data'):
     """
     os.makedirs(data_dir, exist_ok=True)
 
-    SKIP_ZOOM_TIMESTEPS = 100
-    
-    env = gym.make("CarRacing-v3", render_mode="rgb_array", max_episode_steps=max_timesteps+SKIP_ZOOM_TIMESTEPS)
+    env = gym.make("VizdoomTakeCover-v0", render_mode='rgb_array')
     
     start = time.time()
-    # *the generated track is random every episode
     for rollout_idx in tqdm(range(rollouts), desc="Generating rollouts"):
         # rollout data
         observations = []
@@ -37,40 +34,26 @@ def generate_data(rollouts, max_timesteps, data_dir='recorded_data'):
         rewards = []
         terminals = []
         
-        observation, info = env.reset()
-        prev_action = np.array([0.0, 0.0, 0.0])
-
-        # Skip the initial zoom-in frames
-        for _ in range(SKIP_ZOOM_TIMESTEPS):
-            action = np.array([0.0, 0.0, 0.0])
-            observation, _, terminated, truncated, _ = env.step(action)
+        observation, _ = env.reset()
+        observation = observation['screen']
 
         # Run rollout for specified max timesteps or until terminated
-        for t in range(max_timesteps):
-            # remove the bottom black bar that shows controls
-            cropped_obs = observation[0:84, :, :]
+        terminated, truncated = False, False
+        while not terminated and not truncated:
             # resize to 64x64
-            resized_obs = cv2.resize(cropped_obs, (64, 64))
+            resized_obs = cv2.resize(observation, (64, 64))
             observations.append(resized_obs)
             
             # random policy
-            noise_scale = 0.75  # Controls smoothness - lower is smoother
-            random_change = np.random.normal(0, noise_scale, size=3)
-            action = np.clip(prev_action + random_change, [-1.0, 0.0, 0.0], [1.0, 1.0, 1.0])
-            prev_action = action
+            action = np.random.choice([0, 1, 2])
             actions.append(action)
-            
-            # action
             next_observation, reward, terminated, truncated, info = env.step(action)
+            next_observation = next_observation['screen']
             
             rewards.append(reward)
             terminals.append(terminated or truncated)
             
             observation = next_observation
-            
-            # Break if episode terminates
-            if terminated or truncated:
-                break
         
         # save
         episode_data = {
@@ -84,14 +67,13 @@ def generate_data(rollouts, max_timesteps, data_dir='recorded_data'):
             **episode_data
         )
     env.close()
-    print(f"Generated {rollouts} rollouts with {max_timesteps} max timesteps each. \nSaved to {data_dir}")
+    print(f"Generated {rollouts} rollouts. \nSaved to {data_dir}")
     print(f"Time taken: {time.time() - start:.2f} seconds")
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description='Generate CarRacing rollouts')
-    parser.add_argument('--rollouts', type=int, required=True, help='Directory to save rollout data')
-    parser.add_argument('--max_ts', type=int, required=True, help='Directory to save rollout data')
-    parser.add_argument('--dir', type=str, default='saved_rollouts', help='Directory to save rollout data')
+    parser = argparse.ArgumentParser(description='Generate VizdoomTakeCover-v0 rollouts')
+    parser.add_argument('--rollouts', type=int, default=200, help='Directory to save rollout data')
+    parser.add_argument('--dir', type=str, default='vizdoom/recorded_data', help='Directory to save rollout data')
     args = parser.parse_args()
-    generate_data(rollouts=args.rollouts, max_timesteps=args.max_ts, data_dir=args.dir)
+    generate_data(rollouts=args.rollouts, data_dir=args.dir)
