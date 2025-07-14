@@ -35,6 +35,14 @@ class MDN_RNN(nn.Module):
         sigma = torch.exp(sigma.view(batch_dim, seq_dim, self.n_gaussians, self.latent_dim)) + 1e-3 # (N, L, n_g, l_dim)
 
         return pi, mu, sigma, hidden
+
+    def initial_hidden(self):
+        # initialize both h0 and c0: shape (num_layers, batch=1, hidden_dim)
+        num_layers = self.num_layers   # or hard‐code 1/2
+        h0 = torch.zeros(num_layers, 1, self.hidden_size)
+        c0 = torch.zeros(num_layers, 1, self.hidden_size)
+        rnn_hidden = (h0, c0)
+        return rnn_hidden
     
 def gaussian_density(mu, sigma, y):
     """

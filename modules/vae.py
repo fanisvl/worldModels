@@ -51,6 +51,14 @@ class VAE(nn.Module):
 
         return recon_x, mu, log_var, z
     
+    def encode(self, x):
+        mu, log_var = torch.split(self.encoder(x), self.latent_dim, dim=1) # (N, latent_dim), (N, latent_dim)
+        # reparameterization trick
+        eps = torch.randn_like(log_var)
+        z = mu + torch.exp(0.5 * log_var) * eps # -> latent_dim
+        return z
+
+    
     
 def vae_loss(recon_x, x, mu, log_var):
     reconstruction_loss = F.mse_loss(recon_x, x, reduction='sum')
