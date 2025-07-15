@@ -19,15 +19,14 @@ parser = argparse.ArgumentParser(description="VAE Training")
 parser.add_argument('--data_dir', type=str, required=True, help='Directory for training data')
 parser.add_argument('--val_dir', type=str, required=True, help='Directory for validation data')
 parser.add_argument('--num_workers', type=int, default=2, help='Number of workers for data loading')
-parser.add_argument('--checkpoint_interval', type=int, default=1, help='Save a model checkpoint every N epochs')
+parser.add_argument('--checkpoint_interval', type=int, default=None, help='Save a model checkpoint every N epochs')
 
 # Hyperparams 
+parser.add_argument('--epochs', type=int, required=True, help='Number of epochs to train for')
 parser.add_argument('--batch_size', type=int, default=256, help='Batch size for training')
 parser.add_argument('--max_samples', type=int, default=None, help='Maximum number of samples to use from the training dataset')
-parser.add_argument('--epochs', type=int, required=True, help='Number of epochs to train for')
 parser.add_argument('--latent_dim', type=int, default=32, help='Dimensionality of the latent space')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-
 parser.add_argument('--beta', type=float, default=1.0, help='Final weight of the KL term (beta in beta-VAE)')
 parser.add_argument('--kl_anneal_epochs', type=int, default=0, help='Number of epochs to anneal KL-divergence weight')
 
@@ -186,10 +185,11 @@ for epoch in range(1, EPOCHS + 1):
     })
 
     # Save checkpoint
-    if epoch % CHECKPOINT_INTERVAL == 0 or epoch == EPOCHS:
+    if (CHECKPOINT_INTERVAL != None and epoch % CHECKPOINT_INTERVAL == 0) or epoch == EPOCHS:
         os.makedirs("checkpoints", exist_ok=True)
         cp_path = os.path.join("checkpoints", f"{RUN_NAME}_epoch{epoch}.pt")
         torch.save(model.state_dict(), cp_path)
+        
         art = wandb.Artifact('vae-checkpoints', type='model')
         art.add_file(cp_path)
         wandb.log_artifact(art, aliases=[f"epoch_{epoch}"])
