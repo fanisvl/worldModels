@@ -5,54 +5,53 @@ import torch.optim as optim
 from datetime import datetime
 from tqdm import tqdm
 import os
-import sys
-from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import Subset
 import subprocess
 import wandb
-
-ddmm = datetime.now().strftime("%d-%m")
 
 sys.path.append("worldModels")
 from data.dataset import RolloutDataset
 from modules.vae import VAE
 
-# -- Dataset --
+# -- Settings --
 DATA_DIR = '/content/vizdoom_10k'
+VAL_DIR = '/content/vizdoom_val_1k'
 BATCH_SIZE = 256
 NUM_WORKERS = 2
-
-dataset = RolloutDataset(data_dir=DATA_DIR, max_files=500)
-dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# -- Hyperparams --
+MAX_SAMPLES = None
+EPOCHS = 1
 LATENT_DIM = 32
 LR = 1e-3
-EPOCHS = 1
-RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.sample500.{ddmm}'
+
+ddmm = datetime.now().strftime("%d-%m")
+RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.sample{MAX_SAMPLES}.{ddmm}'
+
+# -- Datasets & Loaders --
+train_dataset = RolloutDataset(data_dir=DATA_DIR, max_samples=MAX_SAMPLES)
+val_dataset = RolloutDataset(data_dir=VAL_DIR)
+
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # -- W&B Init --
 wandb.init(
     project="VAE",
-    name = RUN_NAME,
+    name=RUN_NAME,
     config={
         "latent_dim": LATENT_DIM,
         "learning_rate": LR,
         "batch_size": BATCH_SIZE,
         "epochs": EPOCHS,
+        "MAX_SAMPLES": MAX_SAMPLES
     }
 )
 
+# -- Model & Optimizer --
 model = VAE(latent_dim=LATENT_DIM).to(device)
 optimizer = optim.Adam(model.parameters(), lr=LR)
-model.train()
 
-global_step = 0
-
-# Utility: get GPU stats via nvidia-smi
-
+# Utility: GPU stats
 def get_gpu_stats():
     try:
         output = subprocess.check_output([
@@ -65,18 +64,16 @@ def get_gpu_stats():
     except Exception:
         return None, None
 
-for epoch in range(EPOCHS):
-    total_loss = 0
-    total_recon_loss = 0
-    total_kl_loss = 0
+# -- Training & Validation Loops --
+for epoch in range(1, EPOCHS + 1):
+    model.train()
+    train_total, train_recon, train_kl = 0, 0, 0
+    global_step = (epoch - 1) * len(train_loader)
 
-    for observation, action, rollout_idx in tqdm(dataloader, desc=f"Epoch {epoch+1}/{EPOCHS}"):
-        batch = observation.to(device)
-
-        recon_x, mu, log_var, z = model(batch)
-
-        # Loss
-        recon_loss = torch.nn.functional.mse_loss(recon_x, batch, reduction='sum')
+    for obs, action, idx in tqdm(train_loader, desc=f"Train Epoch {epoch}/{EPOCHS}"):
+        x = obs.to(device)
+        recon_x, mu, log_var, _ = model(x)
+        recon_loss = torch.nn.functional.mse_loss(recon_x, x, reduction='sum')
         kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
         loss = recon_loss + kl_loss
 
@@ -84,50 +81,65 @@ for epoch in range(EPOCHS):
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.item()
-        total_recon_loss += recon_loss.item()
-        total_kl_loss += kl_loss.item()
+        train_total += loss.item()
+        train_recon += recon_loss.item()
+        train_kl += kl_loss.item()
 
-        # GPU stats
-        gpu_util, mem_util = get_gpu_stats()
-
-        # W&B logging per step
-        log_dict = {
-            "Loss/Total": loss.item(),
-            "Loss/Reconstruction": recon_loss.item(),
-            "Loss/KL": kl_loss.item(),
-            "step": global_step,
+        gpu_u, mem_u = get_gpu_stats()
+        log = {
+            "train/total_loss": loss.item(),
+            "train/recon_loss": recon_loss.item(),
+            "train/kl_loss": kl_loss.item(),
+            "step": global_step
         }
-        if gpu_util is not None:
-            log_dict.update({
-                "GPU/Utilization(%)": gpu_util,
-                "GPU/Memory_Util(%)": mem_util
-            })
-
-        wandb.log(log_dict)
+        if gpu_u is not None:
+            log.update({"gpu/util": gpu_u, "gpu/mem": mem_u})
+        wandb.log(log)
         global_step += 1
 
-    avg_loss = total_loss / len(dataloader.dataset)
-    avg_recon = total_recon_loss / len(dataloader.dataset)
-    avg_kl = total_kl_loss / len(dataloader.dataset)
+    # Compute training averages
+    n_train = len(train_loader.dataset)
+    avg_train = train_total / n_train
+    avg_recon = train_recon / n_train
+    avg_kl = train_kl / n_train
 
-    tqdm.write(f"Epoch {epoch+1}: Total Loss={avg_loss:.2f}, Recon Loss={avg_recon:.2f}, KL Loss={avg_kl:.2f}")
+    # -- Validation --
+    model.eval()
+    val_total, val_recon, val_kl = 0, 0, 0
+    with torch.no_grad():
+        for obs, action, idx in tqdm(val_loader, desc=f"Val Epoch {epoch}/{EPOCHS}"):
+            x = obs.to(device)
+            recon_x, mu, log_var, _ = model(x)
+            recon_l = torch.nn.functional.mse_loss(recon_x, x, reduction='sum')
+            kl_l = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+            val_total += (recon_l + kl_l).item()
+            val_recon += recon_l.item()
+            val_kl += kl_l.item()
 
-    # W&B logging per epoch
+    # Compute validation averages
+    n_val = len(val_loader.dataset)
+    avg_val = val_total / n_val
+    avg_val_recon = val_recon / n_val
+    avg_val_kl = val_kl / n_val
+
+    # Log epoch metrics
+    print(f"Epoch {epoch}: train_loss={avg_train:.4f}, val_loss={avg_val:.4f}")
     wandb.log({
-        "Epoch/Loss/Total": avg_loss,
-        "Epoch/Loss/Reconstruction": avg_recon,
-        "Epoch/Loss/KL": avg_kl,
-        "epoch": epoch + 1
+        "epoch": epoch,
+        "epoch/train_loss": avg_train,
+        "epoch/val_loss": avg_val,
+        "epoch/train_recon": avg_recon,
+        "epoch/val_recon": avg_val_recon,
+        "epoch/train_kl": avg_kl,
+        "epoch/val_kl": avg_val_kl
     })
 
-    # Save checkpoint & upload to W&B
+    # Save checkpoint
     os.makedirs("checkpoints", exist_ok=True)
-    checkpoint_path = f"checkpoints/vae_e{epoch+1}.pt"
-    torch.save(model.state_dict(), checkpoint_path)
-    # Upload as W&B Artifact
-    artifact = wandb.Artifact('vae-checkpoints', type='model')
-    artifact.add_file(checkpoint_path)
-    wandb.log_artifact(artifact)
+    cp = f"{RUN_NAME}.pt"
+    torch.save(model.state_dict(), cp)
+    art = wandb.Artifact('vae-checkpoints', type='model')
+    art.add_file(cp)
+    wandb.log_artifact(art)
 
 wandb.finish()
