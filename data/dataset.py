@@ -3,8 +3,12 @@ from torch.utils.data import Dataset
 import numpy as np
 import os
 
-class CarRacingDataset(Dataset):
-    def __init__(self, data_dir, transform=None):
+class RolloutDataset(Dataset):
+    """
+    Contains observation (64x64x3) and action data
+    """
+
+    def __init__(self, data_dir, transform=None, max_samples=None):
         self.data_dir = data_dir
         self.transform = transform
 
@@ -14,12 +18,23 @@ class CarRacingDataset(Dataset):
             if f.endswith('.npz')
         ])
 
-        # preload frame indices to avoid loading full dataset into memory
-        self.observation_idx = [] # (file_index, observation_idx)
+        # preload up to max_samples frame indices to avoid loading full dataset into memory
+        self.observation_idx = []  # (file_index, observation_idx)
+        total = 0
         for file_idx, file_path in enumerate(self.file_paths):
             with np.load(file_path) as data:
-                num_observations = data['observations'].shape[0]
-                self.observation_idx.extend([(file_idx, i) for i in range(num_observations)])
+                n = data['observations'].shape[0]
+            # how many from this file?
+            take = n
+            if max_samples is not None:
+                remaining = max_samples - total
+                take = min(n, remaining)
+            # extend by only `take` entries
+            self.observation_idx.extend([(file_idx, i) for i in range(take)])
+            total += take
+            # stop if we've reached the quota
+            if max_samples is not None and total >= max_samples:
+                break
 
     def __len__(self):
         return len(self.observation_idx)
@@ -29,12 +44,12 @@ class CarRacingDataset(Dataset):
         file_path = self.file_paths[rollout_idx]
 
         with np.load(file_path) as data:
-            observation = data['observations'][observation_idx] # (64, 64, 3)
-            action = data['actions'][observation_idx] # (3,)
+            observation = data['observations'][observation_idx]  # (64, 64, 3)
+            action = data['actions'][observation_idx]            # (action_dim,)
 
-        # convert to float32, scale to [0,1], permute to (3, 64, 64)
+        # convert to float32, scale to [0,1], permute to (C, H, W)
         observation = torch.from_numpy(observation).float() / 255.0
-        observation = observation.permute(2,0,1)
+        observation = observation.permute(2, 0, 1)
 
         if self.transform:
             observation = self.transform(observation)
