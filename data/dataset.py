@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 import os
+import random
 
 class RolloutDataset(Dataset):
     """
@@ -19,24 +20,18 @@ class RolloutDataset(Dataset):
         ])
 
         # preload up to max_samples frame indices to avoid loading full dataset into memory
-        self.observation_idx = []  # (file_index, observation_idx)
-        total = 0
+        all_indices = []
         for file_idx, file_path in enumerate(self.file_paths):
             with np.load(file_path) as data:
                 n = data['observations'].shape[0]
-            # how many from this file?
-            take = n
-            if max_samples is not None:
-                remaining = max_samples - total
-                take = min(n, remaining)
-            # extend by only take entries
-            self.observation_idx.extend([(file_idx, i) for i in range(take)])
-            total += take
-            # stop if we've reached the quota
-            if max_samples is not None and total >= max_samples:
-                break
+            all_indices.extend([(file_idx, i) for i in range(n)])
+
+        if max_samples is not None and max_samples < len(all_indices):
+            self.observation_idx = random.sample(all_indices, max_samples)
+        else:
+            self.observation_idx = all_indices
         
-        print(f"[RolloutDataset] Loaded {total} samples from {len(self.file_paths)} files.")
+        print(f"[RolloutDataset] Loaded {len(self.observation_idx)} samples from {len(self.file_paths)} files.")
 
     def __len__(self):
         return len(self.observation_idx)
