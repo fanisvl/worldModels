@@ -8,44 +8,33 @@ class RolloutDataset(Dataset):
     Contains observation (64x64x3) and action data
     """
 
-    def __init__(self, data_dir, transform=None, max_samples=None):
+    def __init__(self, data_dir, transform=None, max_files=None):
         self.data_dir = data_dir
         self.transform = transform
 
-        # get paths to all .npz files
-        self.file_paths = sorted([
-            os.path.join(data_dir, f) for f in os.listdir(data_dir)
-            if f.endswith('.npz')
-        ])
+        # get paths to all .npz files and optionally limit number of files
+        all_files = sorted(
+            os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.npz')
+        )
+        self.file_paths = all_files[:max_files] if max_files is not None else all_files
 
-        # preload up to max_samples frame indices to avoid loading full dataset into memory
-        self.observation_idx = []  # (file_index, observation_idx)
-        total = 0
+        # build index of (file_index, observation_index) for all frames in selected files
+        self.observation_idx = []  # list of tuples (file_idx, obs_idx)
         for file_idx, file_path in enumerate(self.file_paths):
             with np.load(file_path) as data:
-                n = data['observations'].shape[0]
-            # how many from this file?
-            take = n
-            if max_samples is not None:
-                remaining = max_samples - total
-                take = min(n, remaining)
-            # extend by only `take` entries
-            self.observation_idx.extend([(file_idx, i) for i in range(take)])
-            total += take
-            # stop if we've reached the quota
-            if max_samples is not None and total >= max_samples:
-                break
+                num_frames = data['observations'].shape[0]
+            self.observation_idx.extend([(file_idx, i) for i in range(num_frames)])
 
     def __len__(self):
         return len(self.observation_idx)
     
     def __getitem__(self, idx):
-        rollout_idx, observation_idx = self.observation_idx[idx]
-        file_path = self.file_paths[rollout_idx]
+        file_idx, obs_idx = self.observation_idx[idx]
+        file_path = self.file_paths[file_idx]
 
         with np.load(file_path) as data:
-            observation = data['observations'][observation_idx]  # (64, 64, 3)
-            action = data['actions'][observation_idx]            # (action_dim,)
+            observation = data['observations'][obs_idx]  # (64, 64, 3)
+            action = data['actions'][obs_idx]            # (action_dim,)
 
         # convert to float32, scale to [0,1], permute to (C, H, W)
         observation = torch.from_numpy(observation).float() / 255.0
@@ -54,7 +43,7 @@ class RolloutDataset(Dataset):
         if self.transform:
             observation = self.transform(observation)
         
-        return (observation, action, rollout_idx)
+        return observation, action, file_idx
     
 
 class LatentSequenceDataset(Dataset):
