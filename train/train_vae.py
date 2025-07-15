@@ -142,7 +142,6 @@ for epoch in range(1, EPOCHS + 1):
     # -- Validation --
     model.eval()
     val_total, val_recon, val_kl = 0, 0, 0
-    logged_images = False
     with torch.no_grad():
         for obs, action, idx in tqdm(val_loader, desc=f"Val Epoch {epoch}/{EPOCHS}"):
             x = obs.to(device)
@@ -153,18 +152,23 @@ for epoch in range(1, EPOCHS + 1):
             val_recon += recon_l.item()
             val_kl += kl_l.item()
 
-            # Log validation reconstructions
-            if not logged_images:
-                num_images = min(x.size(0), 3)
-                originals = x[:num_images].cpu()
-                reconstructions = recon_x[:num_images].cpu()
-                
-                wandb.log({
-                    "val/originals": [wandb.Image(img) for img in originals],
-                    "val/reconstructions": [wandb.Image(img) for img in reconstructions],
-                    "epoch": epoch
-                })
-                logged_images = True
+    # Log validation reconstructions from start, middle, and end of the dataset
+    with torch.no_grad():
+        n_val = len(val_dataset)
+        indices_to_log = [0, n_val // 2, n_val - 1]
+        
+        # Get original images
+        originals_obs = [val_dataset[i][0] for i in indices_to_log]
+        originals = torch.stack(originals_obs).to(device)
+        
+        # Get reconstructions
+        reconstructions, _, _, _ = model(originals)
+        
+        wandb.log({
+            "val/originals": [wandb.Image(img.cpu()) for img in originals],
+            "val/reconstructions": [wandb.Image(img.cpu()) for img in reconstructions],
+            "epoch": epoch
+        })
 
     # Compute validation averages
     n_val = len(val_loader.dataset)
