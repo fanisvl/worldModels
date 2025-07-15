@@ -7,23 +7,48 @@ from tqdm import tqdm
 import os
 import subprocess
 import wandb
+import argparse
 
 sys.path.append("worldModels")
 from data.dataset import RolloutDataset
 from modules.vae import VAE
 
+# -- Argument Parser --
+parser = argparse.ArgumentParser(description="VAE Training")
+# 
+parser.add_argument('--data_dir', type=str, required=True, help='Directory for training data')
+parser.add_argument('--val_dir', type=str, required=True, help='Directory for validation data')
+parser.add_argument('--num_workers', type=int, default=2, help='Number of workers for data loading')
+parser.add_argument('--checkpoint_interval', type=int, default=1, help='Save a model checkpoint every N epochs')
+
+# Hyperparams 
+parser.add_argument('--batch_size', type=int, default=256, help='Batch size for training')
+parser.add_argument('--max_samples', type=int, default=None, help='Maximum number of samples to use from the training dataset')
+parser.add_argument('--epochs', type=int, required=True, help='Number of epochs to train for')
+parser.add_argument('--latent_dim', type=int, default=32, help='Dimensionality of the latent space')
+parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+
+parser.add_argument('--beta', type=float, default=1.0, help='Final weight of the KL term (beta in beta-VAE)')
+parser.add_argument('--kl_anneal_epochs', type=int, default=0, help='Number of epochs to anneal KL-divergence weight')
+
+args = parser.parse_args()
+
+
 # -- Settings --
-DATA_DIR = '/content/vizdoom_10k'
-VAL_DIR = '/content/vizdoom_val_1k'
-BATCH_SIZE = 256
-NUM_WORKERS = 2
-MAX_SAMPLES = None
-EPOCHS = 1
-LATENT_DIM = 32
-LR = 1e-3
+DATA_DIR = args.data_dir
+VAL_DIR = args.val_dir
+BATCH_SIZE = args.batch_size
+NUM_WORKERS = args.num_workers
+MAX_SAMPLES = args.max_samples
+EPOCHS = args.epochs
+LATENT_DIM = args.latent_dim
+LR = args.lr
+CHECKPOINT_INTERVAL = args.checkpoint_interval
+BETA = args.beta
+KL_ANNEAL_EPOCHS = args.kl_anneal_epochs
 
 ddmm = datetime.now().strftime("%d-%m")
-RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.sample{MAX_SAMPLES}.{ddmm}'
+RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.bs{BATCH_SIZE}.sample{MAX_SAMPLES}.{ddmm}'
 
 # -- Datasets & Loaders --
 train_dataset = RolloutDataset(data_dir=DATA_DIR, max_samples=MAX_SAMPLES)
@@ -43,7 +68,10 @@ wandb.init(
         "learning_rate": LR,
         "batch_size": BATCH_SIZE,
         "epochs": EPOCHS,
-        "MAX_SAMPLES": MAX_SAMPLES
+        "MAX_SAMPLES": MAX_SAMPLES,
+        "checkpoint_interval": CHECKPOINT_INTERVAL,
+        "beta": BETA,
+        "kl_anneal_epochs": KL_ANNEAL_EPOCHS,
     }
 )
 
@@ -51,7 +79,6 @@ wandb.init(
 model = VAE(latent_dim=LATENT_DIM).to(device)
 optimizer = optim.Adam(model.parameters(), lr=LR)
 
-# Utility: GPU stats
 def get_gpu_stats():
     try:
         output = subprocess.check_output([
@@ -75,7 +102,15 @@ for epoch in range(1, EPOCHS + 1):
         recon_x, mu, log_var, _ = model(x)
         recon_loss = torch.nn.functional.mse_loss(recon_x, x, reduction='sum')
         kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        loss = recon_loss + kl_loss
+
+        # KL Annealing
+        if KL_ANNEAL_EPOCHS > 0:
+            anneal_steps = KL_ANNEAL_EPOCHS * len(train_loader)
+            current_beta = BETA * min(1.0, global_step / anneal_steps)
+        else:
+            current_beta = BETA
+        
+        loss = recon_loss + current_beta * kl_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -90,6 +125,8 @@ for epoch in range(1, EPOCHS + 1):
             "train/total_loss": loss.item(),
             "train/recon_loss": recon_loss.item(),
             "train/kl_loss": kl_loss.item(),
+            "train/beta": current_beta,
+            "train/lr": optimizer.param_groups[0]['lr'],
             "step": global_step
         }
         if gpu_u is not None:
@@ -106,6 +143,7 @@ for epoch in range(1, EPOCHS + 1):
     # -- Validation --
     model.eval()
     val_total, val_recon, val_kl = 0, 0, 0
+    logged_images = False
     with torch.no_grad():
         for obs, action, idx in tqdm(val_loader, desc=f"Val Epoch {epoch}/{EPOCHS}"):
             x = obs.to(device)
@@ -115,6 +153,19 @@ for epoch in range(1, EPOCHS + 1):
             val_total += (recon_l + kl_l).item()
             val_recon += recon_l.item()
             val_kl += kl_l.item()
+
+            # Log validation reconstructions
+            if not logged_images:
+                num_images = min(x.size(0), 3)
+                originals = x[:num_images].cpu()
+                reconstructions = recon_x[:num_images].cpu()
+                
+                wandb.log({
+                    "val/originals": [wandb.Image(img) for img in originals],
+                    "val/reconstructions": [wandb.Image(img) for img in reconstructions],
+                    "epoch": epoch
+                })
+                logged_images = True
 
     # Compute validation averages
     n_val = len(val_loader.dataset)
@@ -135,11 +186,13 @@ for epoch in range(1, EPOCHS + 1):
     })
 
     # Save checkpoint
-    os.makedirs("checkpoints", exist_ok=True)
-    cp = f"{RUN_NAME}.pt"
-    torch.save(model.state_dict(), cp)
-    art = wandb.Artifact('vae-checkpoints', type='model')
-    art.add_file(cp)
-    wandb.log_artifact(art)
+    if epoch % CHECKPOINT_INTERVAL == 0 or epoch == EPOCHS:
+        os.makedirs("checkpoints", exist_ok=True)
+        cp_path = os.path.join("checkpoints", f"{RUN_NAME}_epoch{epoch}.pt")
+        torch.save(model.state_dict(), cp_path)
+        art = wandb.Artifact('vae-checkpoints', type='model')
+        art.add_file(cp_path)
+        wandb.log_artifact(art, aliases=[f"epoch_{epoch}"])
+        print(f"Saved checkpoint at epoch {epoch} to {cp_path}")
 
 wandb.finish()
