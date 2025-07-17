@@ -9,9 +9,10 @@ class RolloutDataset(Dataset):
     Contains observation (64x64x3) and action data
     """
 
-    def __init__(self, data_dir, transform=None, max_samples=None):
+    def __init__(self, data_dir, transform=None, max_samples=None, invert_colors=False):
         self.data_dir = data_dir
         self.transform = transform
+        self.invert_colors = invert_colors
 
         # get paths to all .npz files
         self.file_paths = sorted([
@@ -30,7 +31,7 @@ class RolloutDataset(Dataset):
         else:
             self.observation_idx = all_indices
         
-        print(f"[RolloutDataset] Loaded {len(self.observation_idx)} samples from {len(self.file_paths)} files.")
+        print(f'[Rollout Dataset]\n Loaded {len(self.observation_idx)} samples.\nTotal Available Samples: {len(all_indices)} \nTotal Files/Rollouts: {len(self.file_paths)}')
 
     def __len__(self):
         return len(self.observation_idx)
@@ -46,6 +47,9 @@ class RolloutDataset(Dataset):
         # convert to float32, scale to [0,1], permute to (C, H, W)
         observation = torch.from_numpy(observation).float() / 255.0
         observation = observation.permute(2, 0, 1)
+
+        if self.invert_colors:
+            observation = 1.0 - observation
 
         if self.transform:
             observation = self.transform(observation)
