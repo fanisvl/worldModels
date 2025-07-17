@@ -48,7 +48,8 @@ N_LAYERS = args.n_layers
 N_GAUSSIANS = args.n_gaussians
 LR = args.lr
 ddmm = datetime.now().strftime("%d-%m")
-RUN_NAME = f'rnn.l{LATENT_DIM}.h{HIDDEN_SIZE}.seq{SEQUENCE_LENGTH}.e{EPOCHS}.bs{BATCH_SIZE}.{ddmm}'
+dataset_name = DATA_DIR.split('/')[-1]
+RUN_NAME = f'rnn.l{LATENT_DIM}.h{HIDDEN_SIZE}.seq{SEQUENCE_LENGTH}.e{EPOCHS}.bs{BATCH_SIZE}.{dataset_name}.{ddmm}'
 
 def set_seed(seed):
     random.seed(seed)
