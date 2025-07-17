@@ -74,6 +74,6 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Generate VizdoomTakeCover-v0 rollouts')
     parser.add_argument('--rollouts', type=int, default=200, help='Directory to save rollout data')
-    parser.add_argument('--dir', type=str, default='vizdoom/recorded_data', help='Directory to save rollout data')
+    parser.add_argument('--dir', type=str, default='vizdoom_rollouts/recorded_data', help='Directory to save rollout data')
     args = parser.parse_args()
     generate_data(rollouts=args.rollouts, data_dir=args.dir)

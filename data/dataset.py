@@ -19,7 +19,6 @@ class RolloutDataset(Dataset):
             if f.endswith('.npz')
         ])
 
-        # preload up to max_samples frame indices to avoid loading full dataset into memory
         all_indices = []
         for file_idx, file_path in enumerate(self.file_paths):
             with np.load(file_path) as data:

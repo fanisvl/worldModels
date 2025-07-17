@@ -63,7 +63,7 @@ def inspect_data(data_dir, rollout_idx):
         ax.axis('off')
         return [ax]
     anim = animation.FuncAnimation(fig, animate, init_func=init, 
-                                    frames=len(observations), interval=500, blit=False)
+                                    frames=len(observations), interval=100, blit=False)
     plt.show()
 
     return {
