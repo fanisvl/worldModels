@@ -22,6 +22,7 @@ parser.add_argument('--data_dir', type=str, required=True, help='Directory for t
 parser.add_argument('--val_dir', type=str, required=True, help='Directory for validation data')
 parser.add_argument('--num_workers', type=int, default=2, help='Number of workers for data loading')
 parser.add_argument('--checkpoint_interval', type=int, default=None, help='Save a model checkpoint every N epochs')
+parser.add_argument('--invert_colors', action='store_true', help='Invert the observation colors in the RolloutDataset')
 
 # Hyperparams 
 parser.add_argument('--epochs', type=int, required=True, help='Number of epochs to train for')
@@ -47,6 +48,7 @@ EPOCHS = args.epochs
 LATENT_DIM = args.latent_dim
 LR = args.lr
 CHECKPOINT_INTERVAL = args.checkpoint_interval
+INVERT_COLORS = args.invert_colors
 BETA = args.beta
 KL_ANNEAL_EPOCHS = args.kl_anneal_epochs
 KL_LOSS_THRESHOLD = args.kl_loss_threshold
@@ -55,8 +57,8 @@ ddmm = datetime.now().strftime("%d-%m")
 RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.bs{BATCH_SIZE}.sample{MAX_SAMPLES}.{ddmm}'
 
 # -- Datasets & Loaders --
-train_dataset = RolloutDataset(data_dir=DATA_DIR, max_samples=MAX_SAMPLES)
-val_dataset = RolloutDataset(data_dir=VAL_DIR)
+train_dataset = RolloutDataset(data_dir=DATA_DIR, max_samples=MAX_SAMPLES, invert_colors=INVERT_COLORS)
+val_dataset = RolloutDataset(data_dir=VAL_DIR, invert_colors=INVERT_COLORS)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
