@@ -44,7 +44,7 @@ class MDN_RNN(nn.Module):
         rnn_hidden = (h0, c0)
         return rnn_hidden
     
-def gaussian_density(mu, sigma, y):
+def log_gaussian_density(mu, raw_sigma, y):
     """
     Compute per-component, per-timestep multivariate Gaussian density
 
@@ -55,22 +55,31 @@ def gaussian_density(mu, sigma, y):
     returns (N, L, n_g) densities 
 
     """
-    norm = 1.0 / torch.sqrt(torch.tensor(2.0) * torch.pi) 
-    # y.shape     = [N, L, latent_dim] -> [N, L, 1, l_dim]
-    y = y.unsqueeze(2)
-    # mu.shape    = [N, L, n_g, l_dim]
-    # sigma.shape = [N, L, n_g, l_dim]
-    per_dim = torch.exp(-0.5 * ((y-mu)/sigma)**2) / (sigma) * norm # [N, L, n_g, l_dim]
+    y = y.unsqueeze(2) # [N, L, latent_dim] -> [N, L, 1, l_dim]
+    sigma = torch.exp(raw_sigma) + 1e-4
 
-    # product over l_dim to get the full latent dimension density
-    # p(y | m_k, s_k)
-    return torch.prod(per_dim, dim=-1) # (N, L, n_g)
+    # log gaussian
+    log_prob_per_latent = (
+        -torch.log(sigma)
+        -0.5 * torch.log(torch.tensor(2.0 * torch.pi))
+        -0.5 * ((y-mu) / sigma) ** 2
+    )
 
-def mdn_loss(pi, mu, sigma, y): 
+    # Sum over latent dimensions (log(prod(p_i)) = sum(log(p_i)) to avoid the underflow from taking the product)
+    # log p(y | m_k, s_k)
+    return torch.sum(log_prob_per_latent, dim=-1) # [N, L, n_g]
+
+def mdn_loss(pi_logits, mu, sigma, y): 
     """
-    pi: [N, L, n_g]
+    pi_logits: [N, L, n_g] - Raw logits for the mixture components
+    mu: [N, L, n_g, l_dim]
+    raw_sigma: [N, L, n_g, l_dim]
+    y: [N, L, l_dim]
     """
-    res = pi * gaussian_density(mu, sigma, y) # [N, L, n_g]
-    res = torch.sum(res, -1) # P(y) - [N, L]
-    res = -torch.log(res) # -log(P(y)) # [N, L]
-    return torch.mean(res)
+    log_gaussian = log_gaussian_density(mu, sigma, y)
+    log_pi = F.log_softmax(pi_logits, dim=-1)
+    log_weighted = log_pi + log_gaussian # [N, L, n_g]
+    # log(sum(pi*gaussian)), log-sum-exp helps with numericaly stability by subtracting the maximum value:
+    # log(sum(exp(x))) = max(x) + log(sum(exp(x - max(x))))
+    log_prob = torch.logsumexp(log_weighted, dim=-1) # [N,L]
+    return -torch.mean(log_prob)
