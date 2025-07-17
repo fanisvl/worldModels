@@ -29,6 +29,8 @@ parser.add_argument('--latent_dim', type=int, default=32, help='Dimensionality o
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
 parser.add_argument('--beta', type=float, default=1.0, help='Final weight of the KL term (beta in beta-VAE)')
 parser.add_argument('--kl_anneal_epochs', type=int, default=0, help='Number of epochs to anneal KL-divergence weight')
+parser.add_argument('--use_kl_loss_threshold', action='store_true', help='Stop optimizing the KL loss term rather than letting it go near zero. Optimize max(threshold, kl_loss)')
+
 
 args = parser.parse_args()
 
@@ -45,6 +47,7 @@ LR = args.lr
 CHECKPOINT_INTERVAL = args.checkpoint_interval
 BETA = args.beta
 KL_ANNEAL_EPOCHS = args.kl_anneal_epochs
+USE_KL_LOSS_THRESHOLD = args.kl_loss_threshold
 
 ddmm = datetime.now().strftime("%d-%m")
 RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.bs{BATCH_SIZE}.sample{MAX_SAMPLES}.{ddmm}'
@@ -101,6 +104,9 @@ for epoch in range(1, EPOCHS + 1):
         recon_x, mu, log_var, _ = model(x)
         recon_loss = torch.nn.functional.mse_loss(recon_x, x, reduction='sum')
         kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+
+        if USE_KL_LOSS_THRESHOLD:
+            kl_loss = torch.max(kl_loss, 32) # Use latent_dim = 32 as threshold
 
         # KL Annealing
         if KL_ANNEAL_EPOCHS > 0:
