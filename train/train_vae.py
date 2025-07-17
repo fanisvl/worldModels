@@ -8,6 +8,8 @@ import os
 import subprocess
 import wandb
 import argparse
+import os
+import time
 
 sys.path.append("worldModels")
 from data.dataset import RolloutDataset
@@ -62,6 +64,7 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_w
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # -- W&B Init --
+os.environ["WANDB_LOG_GPU_PERFORMANCE"] = "true"
 wandb.init(
     project="VAE",
     name=RUN_NAME,
@@ -81,25 +84,16 @@ wandb.init(
 model = VAE(latent_dim=LATENT_DIM).to(device)
 optimizer = optim.Adam(model.parameters(), lr=LR)
 
-def get_gpu_stats():
-    try:
-        output = subprocess.check_output([
-            "nvidia-smi",
-            "--query-gpu=utilization.gpu,utilization.memory",
-            "--format=csv,nounits,noheader"
-        ])
-        gpu_str, mem_str = output.decode().strip().split(',')
-        return int(gpu_str), int(mem_str)
-    except Exception:
-        return None, None
-
 # -- Training & Validation Loops --
 for epoch in range(1, EPOCHS + 1):
     model.train()
     train_total, train_recon, train_kl = 0, 0, 0
     global_step = (epoch - 1) * len(train_loader)
-
+    iter_start_time = time.time()
     for obs, action, idx in tqdm(train_loader, desc=f"Train Epoch {epoch}/{EPOCHS}"):
+        data_end_time = time.time()
+        data_time = data_end_time - iter_start_time
+
         x = obs.to(device)
         recon_x, mu, log_var, _ = model(x)
         recon_loss = torch.nn.functional.mse_loss(recon_x, x, reduction='sum')
@@ -127,21 +121,22 @@ for epoch in range(1, EPOCHS + 1):
         loss.backward()
         optimizer.step()
 
+        compute_time = time.time() - data_end_time
+
         train_total += loss.item()
         train_recon += recon_loss.item()
         train_kl += kl_loss.item()
 
-        gpu_u, mem_u = get_gpu_stats()
         log = {
             "train/total_loss": loss.item(),
             "train/recon_loss": recon_loss.item(),
             "train/kl_loss": kl_loss.item(),
             "train/beta": current_beta,
             "train/lr": optimizer.param_groups[0]['lr'],
+            "profiling/data_time_ms": data_time * 1000,
+            "profiling/compute_time_ms": compute_time * 1000,
             "step": global_step
         }
-        if gpu_u is not None:
-            log.update({"gpu/util": gpu_u, "gpu/mem": mem_u})
         wandb.log(log)
         global_step += 1
 
