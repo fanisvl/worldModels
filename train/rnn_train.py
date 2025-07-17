@@ -11,7 +11,8 @@ import random
 import numpy as np
 import time
 sys.path.append("worldModels")
-from modules.rnn import MDN_RNN, mdn_loss 
+sys.path.append(".")
+from modules.mdn_rnn import MDN_RNN, mdn_loss 
 from data.dataset import LatentSequenceDataset
 
 # -- Argument Parser --

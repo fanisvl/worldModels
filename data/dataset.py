@@ -100,7 +100,7 @@ class LatentSequenceDataset(Dataset):
 
             # We need latents from t=0 to t=L and actions from t=0 to t=L-1
             latents = data['latent_observations'][start_idx:end_idx+1]
-            actions = data['actions'][start_idx:end_idx]
+            actions = data['actions'][start_idx:end_idx].reshape(-1,1)
 
             # Input (latent_t, action_t)
             # Target (latent_{t+1})

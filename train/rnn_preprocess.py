@@ -13,12 +13,15 @@ from modules.vae import VAE
 
 def precompute_latents(vae_path, data_dir, output_dir, batch_size):
     """
-    Pre-process rollouts for MDN-RNN training by using the VAE to create the latent dataset.
+    # Pre-process rollouts for MDN-RNN training by using the VAE to create the latent dataset.
     """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     # load the model
     vae = VAE(32)
-    vae.load_state_dict(torch.load(vae_path, map_location='cpu'))
+    vae.load_state_dict(torch.load(vae_path, map_location=device))
+    vae.to(device)
     vae.eval()
 
     # load dataset
@@ -28,9 +31,12 @@ def precompute_latents(vae_path, data_dir, output_dir, batch_size):
     sequence_data = {}  # Dictionary to store data by file_idx (sequence)
     
     for batch_frames, batch_actions, batch_file_idxs in tqdm(dl, desc='Encoding Observations'):
+        batch_frames = batch_frames.to(device)
         # Forward pass through VAE
-        _, _, _, z = vae(batch_frames)  # z: (batch_size, 32)
+        with torch.no_grad():
+            _, _, _, z = vae(batch_frames)  # z: (batch_size, 32)
         
+        z = z.cpu()
         # Group by sequence (file_idx)
         for i in range(len(batch_file_idxs)):
             file_idx = batch_file_idxs[i].item()
@@ -41,7 +47,7 @@ def precompute_latents(vae_path, data_dir, output_dir, batch_size):
                     'actions': []
                 }
             
-            sequence_data[file_idx]['latents'].append(z[i].detach().numpy())
+            sequence_data[file_idx]['latents'].append(z[i].numpy())
             sequence_data[file_idx]['actions'].append(batch_actions[i].numpy())
     
     # Save each sequence as a separate file
