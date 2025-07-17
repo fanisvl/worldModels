@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 import numpy as np
 import os
 import random
+from tqdm import tqdm
 
 class RolloutDataset(Dataset):
     """
@@ -21,7 +22,7 @@ class RolloutDataset(Dataset):
         ])
 
         all_indices = []
-        for file_idx, file_path in enumerate(self.file_paths):
+        for file_idx, file_path in enumerate(tqdm(self.file_paths, desc='Loading RolloutDataset')):
             with np.load(file_path) as data:
                 n = data['observations'].shape[0]
             all_indices.extend([(file_idx, i) for i in range(n)])
@@ -31,7 +32,7 @@ class RolloutDataset(Dataset):
         else:
             self.observation_idx = all_indices
         
-        print(f'[Rollout Dataset]\n Loaded {len(self.observation_idx)} samples.\nTotal Available Samples: {len(all_indices)} \nTotal Files/Rollouts: {len(self.file_paths)}')
+        print(f'[Rollout Dataset]\nLoaded {len(self.observation_idx)}/{len(all_indices)} samples.\nTotal Files/Rollouts: {len(self.file_paths)}')
 
     def __len__(self):
         return len(self.observation_idx)
@@ -70,7 +71,7 @@ class LatentSequenceDataset(Dataset):
 
         # (file_index, start_frame_index)
         self.indices = []
-        for file_idx, file_path in enumerate(self.file_paths):
+        for file_idx, file_path in enumerate(tqdm(self.file_paths, desc='Loading LatentSequence dataset')):
             with np.load(file_path) as data:
                 num_frames = data['latent_observations'].shape[0]
 
