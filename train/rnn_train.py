@@ -2,6 +2,7 @@ import sys
 import torch
 from torch.utils.data import DataLoader, random_split
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from datetime import datetime
 from tqdm import tqdm
 import os
@@ -68,8 +69,8 @@ train_dataset, val_dataset = random_split(
     [train_size, val_size],
     generator=torch.Generator().manual_seed(SEED)
 )
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # -- W&B Init --
@@ -96,6 +97,7 @@ config = wandb.config
 # -- Model --
 model = MDN_RNN(LATENT_DIM, ACTION_DIM, HIDDEN_SIZE, N_LAYERS, N_GAUSSIANS).to(device)
 opt = torch.optim.Adam(model.parameters(), LR)
+scheduler = ReduceLROnPlateau(opt, 'min', factor=0.5, patience=5, verbose=True)
 print(f'Total params: {sum(p.numel() for p in model.parameters())}')
 
 # -- Training Loop --
@@ -107,11 +109,15 @@ def train():
     total_loss = 0.0
 
     for x, y in tqdm(train_loader, desc="Training"):
-        x, y = x.to(device), y.to(device)
+        start_time = time.time()
+        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+        data_time_ms = int((time.time() - start_time) * 1000)
+        start_time = time.time()
         opt.zero_grad()
         pi, mu, sigma, _ = model(x)
         loss = mdn_loss(pi, mu, sigma, y)
         loss.backward()
+        model_time_ms = int((time.time() - start_time) * 1000)
 
         # Clip gradients and log pre-clip norm and clip coefficient
         total_norm_unscaled = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -121,6 +127,8 @@ def train():
             "batch/loss": loss.item(),
             "batch/grad_norm_unclipped": total_norm_unscaled,
             "batch/grad_clip_coef": clip_coef,
+            "profile/data_time_ms": data_time_ms,
+            "profile/model_time_ms": model_time_ms,
         }, step=global_step)
 
         opt.step()
@@ -144,11 +152,15 @@ for epoch in range(EPOCHS):
     train_loss = train()
     val_loss = validate()
 
+    # Step the scheduler
+    scheduler.step(val_loss)
+
     # Log epoch-level metrics
     wandb.log({
         "epoch": epoch + 1,
         "epoch/train_loss": train_loss,
         "epoch/val_loss": val_loss,
+        "epoch/lr": opt.param_groups[0]['lr']
     }, step=global_step)
 
     print(f'Epoch {epoch+1}/{EPOCHS} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}')
