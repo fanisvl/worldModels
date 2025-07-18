@@ -63,25 +63,30 @@ class LatentSequenceDataset(Dataset):
         self.data_dir = data_dir
         self.sequence_length = sequence_length
 
-        # get paths to all .npz files
+        # get all npz files
         self.file_paths = sorted([
             os.path.join(data_dir, f) for f in os.listdir(data_dir)
             if f.endswith('.npz')
         ])
 
-        # (file_index, start_frame_index)
+        # collect sequence‐start indices, count dropped files
         self.indices = []
+        dropped_files = 0
         for file_idx, file_path in enumerate(tqdm(self.file_paths, desc='Loading LatentSequence dataset')):
             with np.load(file_path) as data:
                 num_frames = data['latent_observations'].shape[0]
 
-                # seq_len inputs and seq_len outputs 
-                # The targer for input t is the latent at t+1
-                # A sequences of length L requires L+1 total frames
-                # The last possible start index is num_frames - (L+1)
                 if num_frames > self.sequence_length:
+                    # each start index yields one full L‐length sequence
                     for i in range(num_frames - self.sequence_length):
                         self.indices.append((file_idx, i))
+                else:
+                    dropped_files += 1
+
+        total_files = len(self.file_paths)
+        print(f'[LatentSequenceDataset] '
+              f'Loaded {len(self.indices)} sequences from {total_files - dropped_files} files. '
+              f'Discarded {dropped_files}/{total_files} files smaller than {self.sequence_length} frames.')
 
         
     def __len__(self):
