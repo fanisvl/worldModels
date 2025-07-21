@@ -7,26 +7,31 @@ from tqdm import tqdm
 
 class RolloutDataset(Dataset):
     """
-    Contains observation (64x64x3) and action data
+    Contains observation (64x64x3) and action data.
+    This version pre-loads all data into RAM.
     """
 
     def __init__(self, data_dir, transform=None, max_samples=None, invert_colors=False):
-        self.data_dir = data_dir
         self.transform = transform
         self.invert_colors = invert_colors
 
         # get paths to all .npz files
-        self.file_paths = sorted([
+        file_paths = sorted([
             os.path.join(data_dir, f) for f in os.listdir(data_dir)
             if f.endswith('.npz')
         ])
 
+        self.rollouts = []
         all_indices = []
-        for file_idx, file_path in enumerate(tqdm(self.file_paths, desc='Loading RolloutDataset')):
+        print("Pre-loading all rollout data into memory...")
+        for file_idx, file_path in enumerate(tqdm(file_paths, desc='Pre-loading RolloutDataset')):
             try:
                 with np.load(file_path) as data:
-                    n = data['observations'].shape[0]
-                all_indices.extend([(file_idx, i) for i in range(n)])
+                    observations = data['observations']
+                    actions = data['actions']
+                    self.rollouts.append({'observations': observations, 'actions': actions})
+                    n = observations.shape[0]
+                    all_indices.extend([(file_idx, i) for i in range(n)])
             except Exception as e:
                 print(f"\nWarning: Skipping corrupted or invalid file: {file_path}")
                 print(f"Error: {e}")
@@ -36,18 +41,18 @@ class RolloutDataset(Dataset):
         else:
             self.observation_idx = all_indices
         
-        print(f'[Rollout Dataset]\nLoaded {len(self.observation_idx)}/{len(all_indices)} samples.\nTotal Files/Rollouts: {len(self.file_paths)}')
+        print(f'[Rollout Dataset]\nLoaded {len(self.observation_idx)}/{len(all_indices)} samples.\nTotal Files/Rollouts: {len(self.rollouts)}')
 
     def __len__(self):
         return len(self.observation_idx)
     
     def __getitem__(self, idx):
         rollout_idx, observation_idx = self.observation_idx[idx]
-        file_path = self.file_paths[rollout_idx]
-
-        with np.load(file_path) as data:
-            observation = data['observations'][observation_idx]  # (64, 64, 3)
-            action = data['actions'][observation_idx]            # (action_dim,)
+        
+        # Access pre-loaded data
+        rollout_data = self.rollouts[rollout_idx]
+        observation = rollout_data['observations'][observation_idx]  # (64, 64, 3)
+        action = rollout_data['actions'][observation_idx]            # (action_dim,)
 
         # convert to float32, scale to [0,1], permute to (C, H, W)
         observation = torch.from_numpy(observation).float() / 255.0
