@@ -23,9 +23,13 @@ class RolloutDataset(Dataset):
 
         all_indices = []
         for file_idx, file_path in enumerate(tqdm(self.file_paths, desc='Loading RolloutDataset')):
-            with np.load(file_path) as data:
-                n = data['observations'].shape[0]
-            all_indices.extend([(file_idx, i) for i in range(n)])
+            try:
+                with np.load(file_path) as data:
+                    n = data['observations'].shape[0]
+                all_indices.extend([(file_idx, i) for i in range(n)])
+            except Exception as e:
+                print(f"\nWarning: Skipping corrupted or invalid file: {file_path}")
+                print(f"Error: {e}")
 
         if max_samples is not None and max_samples < len(all_indices):
             self.observation_idx = random.sample(all_indices, max_samples)
