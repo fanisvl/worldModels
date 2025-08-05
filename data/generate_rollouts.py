@@ -6,7 +6,7 @@ import cv2
 from tqdm import tqdm
 import time
 
-def generate_data(rollouts, data_dir='vizdoom/recorded_data'):
+def generate_data(rollouts, data_dir='vizdoom/recorded_data', action_repetition_range=(1, 10)):
     """
     Run several rollouts in the VizdoomTakeCover-v0 environment.
     Each rollout stores:
@@ -18,6 +18,7 @@ def generate_data(rollouts, data_dir='vizdoom/recorded_data'):
     Args:
         rollouts: Number of episodes to run
         data_dir: Directory to save the collected data
+        action_repetition_range: Tuple (min, max) for the range of steps to repeat an action.
         
     Returns:
         None (saves data to disk)
@@ -40,20 +41,27 @@ def generate_data(rollouts, data_dir='vizdoom/recorded_data'):
         # Run rollout for specified max timesteps or until terminated
         terminated, truncated = False, False
         while not terminated and not truncated:
-            # resize to 64x64
-            resized_obs = cv2.resize(observation, (64, 64))
-            observations.append(resized_obs)
-            
             # random policy
             action = np.random.choice([0, 1, 2])
-            actions.append(action)
-            next_observation, reward, terminated, truncated, info = env.step(action)
-            next_observation = next_observation['screen']
             
-            rewards.append(reward)
-            terminals.append(terminated or truncated)
-            
-            observation = next_observation
+            # Repeat action for a random number of steps within the specified range
+            repeat_steps = np.random.randint(action_repetition_range[0], action_repetition_range[1] + 1)
+            for _ in range(repeat_steps):
+                if terminated or truncated:
+                    break
+                
+                # resize to 64x64
+                resized_obs = cv2.resize(observation, (64, 64))
+                observations.append(resized_obs)
+                
+                actions.append(action)
+                next_observation, reward, terminated, truncated, info = env.step(action)
+                next_observation = next_observation['screen']
+                
+                rewards.append(reward)
+                terminals.append(terminated or truncated)
+                
+                observation = next_observation
         
         # save
         episode_data = {
@@ -75,5 +83,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate VizdoomTakeCover-v0 rollouts')
     parser.add_argument('--rollouts', type=int, default=200, help='Directory to save rollout data')
     parser.add_argument('--dir', type=str, default='vizdoom_rollouts/recorded_data', help='Directory to save rollout data')
+    parser.add_argument('--action_repetition', type=int, nargs=2, default=[1, 10], help='Tuple (min, max) for the range of steps to repeat an action')
     args = parser.parse_args()
-    generate_data(rollouts=args.rollouts, data_dir=args.dir)
+    generate_data(rollouts=args.rollouts, data_dir=args.dir, action_repetition_range=tuple(args.action_repetition))
