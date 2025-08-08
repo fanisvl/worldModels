@@ -31,10 +31,10 @@ class MDN_RNN(nn.Module):
         mu = self.mu(lstm_out)                                                                      # (N, L, n_g * l_dim)
         mu = mu.view(batch_dim, seq_dim, self.n_gaussians, self.latent_dim)                         # (N, L, n_g, l_dim)
 
-        sigma = self.sigma(lstm_out)                                                                # (N, L, n_g * l_dim)
-        sigma = torch.exp(sigma.view(batch_dim, seq_dim, self.n_gaussians, self.latent_dim)) + 1e-3 # (N, L, n_g, l_dim)
+        sigma_logits = self.sigma(lstm_out)                                                                # (N, L, n_g * l_dim)
+        sigma_logits = sigma_logits.view(batch_dim, seq_dim, self.n_gaussians, self.latent_dim) + 1e-3 # (N, L, n_g, l_dim)
 
-        return pi, mu, sigma, hidden
+        return pi, mu, sigma_logits, hidden
 
     def initial_hidden(self):
         # initialize both h0 and c0: shape (num_layers, batch=1, hidden_dim)
@@ -44,7 +44,7 @@ class MDN_RNN(nn.Module):
         rnn_hidden = (h0, c0)
         return rnn_hidden
     
-def log_gaussian_density(mu, raw_sigma, y):
+def log_gaussian_density(mu, sigma_logits, y):
     """
     Compute per-component, per-timestep multivariate Gaussian density
 
@@ -56,7 +56,7 @@ def log_gaussian_density(mu, raw_sigma, y):
 
     """
     y = y.unsqueeze(2) # [N, L, latent_dim] -> [N, L, 1, l_dim]
-    sigma = torch.exp(raw_sigma) + 1e-4
+    sigma = F.elu(sigma_logits) + 1.0 + 1e-4 # ELU is capped at -1, so this is always > 0
 
     # log gaussian
     log_prob_per_latent = (
