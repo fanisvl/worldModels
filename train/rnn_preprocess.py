@@ -1,75 +1,92 @@
 import sys
-from torch.utils.data import DataLoader
 import torch
 import numpy as np
 import os
 import argparse
+from glob import glob
 from tqdm import tqdm
 sys.path.append("worldModels")
 sys.path.append(".")
-from data.dataset import RolloutDataset
 from modules.vae import VAE
 
 
-def precompute_latents(vae_path, data_dir, output_dir, batch_size):
+def _load_rollout(file_path):
+    data = np.load(file_path)
+    frames = data['observations']
+    actions = data['actions']
+    return frames, actions
+
+
+def _prepare_frames(frames):
     """
-    # Pre-process rollouts for MDN-RNN training by using the VAE to create the latent dataset.
+    Convert frames (uint8 HWC or NCHW) to float32 normalized tensor NCHW.
+    """
+    arr = frames
+    if arr.dtype != np.float32:
+        arr = arr.astype(np.float32) / 255.0
+    # If shape is (N, H, W, C) -> transpose to (N, C, H, W)
+    if arr.ndim == 4 and arr.shape[-1] in (1, 3):
+        arr = np.transpose(arr, (0, 3, 1, 2))
+    return arr
+
+
+def encode_rollout(vae, device, frames_np, batch_size, use_fp16=False):
+    frames_np = _prepare_frames(frames_np)
+    latents = []
+    with torch.no_grad():
+        for i in range(0, len(frames_np), batch_size):
+            batch = torch.from_numpy(frames_np[i:i+batch_size]).to(device)
+            if use_fp16:
+                batch = batch.half()
+            _, _, _, z = vae(batch)
+            latents.append(z.float().cpu().numpy())
+    return np.concatenate(latents, axis=0)
+
+def precompute_latents_streaming(vae_path, data_dir, output_dir, batch_size, fp16=False, overwrite=False):
+    """
+    Memory-efficient: iterate rollout files one-by-one, encode, and save.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # load the model
     vae = VAE(32)
     vae.load_state_dict(torch.load(vae_path, map_location=device))
+    if fp16:
+        vae.half()
     vae.to(device)
     vae.eval()
 
-    # load dataset
-    data = RolloutDataset(data_dir)
-    dl = DataLoader(data, batch_size=batch_size)
-    # Process each batch and accumulate latents by sequence
-    sequence_data = {}  # Dictionary to store data by file_idx (sequence)
-    
-    for batch_frames, batch_actions, batch_file_idxs in tqdm(dl, desc='Encoding Observations'):
-        batch_frames = batch_frames.to(device)
-        # Forward pass through VAE
-        with torch.no_grad():
-            _, _, _, z = vae(batch_frames)  # z: (batch_size, 32)
-        
-        z = z.cpu()
-        # Group by sequence (file_idx)
-        for i in range(len(batch_file_idxs)):
-            file_idx = batch_file_idxs[i].item()
-            
-            if file_idx not in sequence_data:
-                sequence_data[file_idx] = {
-                    'latents': [],
-                    'actions': []
-                }
-            
-            sequence_data[file_idx]['latents'].append(z[i].numpy())
-            sequence_data[file_idx]['actions'].append(batch_actions[i].numpy())
-    
-    # Save each sequence as a separate file
     os.makedirs(output_dir, exist_ok=True)
-    for seq_idx, seq_data in sequence_data.items():
-        data = {
-            'latent_observations': np.array(seq_data['latents']),
-            'actions': np.array(seq_data['actions'])
-        }
-        
-        np.savez_compressed(
-            os.path.join(output_dir, f'rollout_{seq_idx:05d}.npz'),
-            **data
-        )
+
+    files = sorted(glob(os.path.join(data_dir, "rollout_*.npz")))
+    if not files:
+        raise RuntimeError(f"No rollout_*.npz files found in {data_dir}")
+
+    for f in tqdm(files, desc="Encoding rollouts"):
+        out_f = os.path.join(output_dir, os.path.basename(f))
+        if (not overwrite) and os.path.exists(out_f):
+            continue
+        frames, actions = _load_rollout(f)
+        latents = encode_rollout(vae, device, frames, batch_size, use_fp16=fp16)
+        np.savez_compressed(out_f, latent_observations=latents, actions=actions)
+    print("Done.")
 
 
 if __name__ == '__main__':
-    
-    parser = argparse.ArgumentParser(description='Precompute latents for MDN-RNN training')
-    parser.add_argument('--vae_path', type=str, help='Path to the VAE model file')
-    parser.add_argument('--data_dir', type=str, help='Directory containing the input data')
-    parser.add_argument('--output_dir', type=str, help='Directory to save the latent data')
-    parser.add_argument('--batch_size', type=int, required=False, default=32, help='Inference batch size')
+    parser = argparse.ArgumentParser(description='Precompute latents for MDN-RNN training (streaming, low RAM).')
+    parser.add_argument('--vae_path', type=str, required=True, help='Path to the VAE model file')
+    parser.add_argument('--data_dir', type=str, required=True, help='Directory containing rollout_*.npz')
+    parser.add_argument('--output_dir', type=str, required=True, help='Directory to save latent rollouts')
+    parser.add_argument('--batch_size', type=int, default=64, help='Inference batch size')
+    parser.add_argument('--fp16', action='store_true', help='Use half precision for VAE (saves VRAM)')
+    parser.add_argument('--overwrite', action='store_true', help='Re-encode even if output file exists')
     args = parser.parse_args()
-    precompute_latents(args.vae_path, args.data_dir, args.output_dir, args.batch_size)
+
+    precompute_latents_streaming(
+        args.vae_path,
+        args.data_dir,
+        args.output_dir,
+        args.batch_size,
+        fp16=args.fp16,
+        overwrite=args.overwrite
+    )
