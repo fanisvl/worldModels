@@ -110,7 +110,7 @@ config = wandb.config
 # -- Model --
 model = MDN_RNN(LATENT_DIM, ACTION_DIM, HIDDEN_SIZE, N_LAYERS, N_GAUSSIANS).to(device)
 opt = torch.optim.Adam(model.parameters(), LR)
-scheduler = ReduceLROnPlateau(opt, 'min', factor=0.5, patience=5, verbose=True)
+scheduler = ReduceLROnPlateau(opt, 'min', factor=0.5, patience=5)
 print(f'Total params: {sum(p.numel() for p in model.parameters())}')
 
 # == DREAM VISUALIZATION LOGIC ==
