@@ -181,9 +181,22 @@ def create_comparison_animation(ground_truth, rnn_model, save_path):
     context_frames_obs = ground_truth[:args.dream_context_frames]
     
     # Generate VAE reconstruction and RNN dream
-    decoded_gt = vae.decode(vae.encode(ground_truth.permute(0, 3, 1, 2) / 255.0)).permute(0, 2, 3, 1).cpu().numpy()
+    decoded_gt = (
+    vae.decode(vae.encode(ground_truth.permute(0, 3, 1, 2) / 255.0))
+    .permute(0, 2, 3, 1)
+    .detach()
+    .cpu()
+    .numpy()
+    )
+    
     dreamed_latents = generate_dream_sequence(rnn_model, context_frames_obs, val_actions)
-    dreamed_frames = vae.decode(dreamed_latents).permute(0, 2, 3, 1).cpu().numpy()
+ 
+    dreamed_frames = (
+    vae.decode(dreamed_latents)
+    .permute(0, 2, 3, 1)
+    .detach()
+    .cpu()
+    .numpy())
     
     ground_truth_np = ground_truth.cpu().numpy()
     actions_np = val_actions.cpu().numpy()
