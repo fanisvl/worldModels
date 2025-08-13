@@ -15,6 +15,10 @@ sys.path.append("worldModels")
 sys.path.append(".")
 from modules.mdn_rnn import MDN_RNN, rnn_loss
 from data.dataset import LatentSequenceDataset
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from modules.vae import VAE
+import torch.nn.functional as F
 
 # -- Argument Parser --
 parser = argparse.ArgumentParser(description="MDN-RNN Training")
@@ -22,16 +26,25 @@ parser.add_argument('--data_dir', type=str, required=True, help='Directory for t
 parser.add_argument('--num_workers', type=int, default=2, help='Number of workers for data loading')
 parser.add_argument('--checkpoint_interval', type=int, default=None, help='Save a model checkpoint every N epochs')
 parser.add_argument('--seed', type=int, default=99, help='Random seed for reproducibility')
+parser.add_argument('--val_split', type=float, default=0.2, help='Validation split percentage')
+
+# Model Hyperparams
 parser.add_argument('--epochs', type=int, required=True, help='Number of epochs to train for')
 parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
 parser.add_argument('--sequence_length', type=int, default=500, help='Sequence length for training')
-parser.add_argument('--val_split', type=float, default=0.2, help='Validation split percentage')
 parser.add_argument('--latent_dim', type=int, default=32, help='Dimensionality of the latent space')
 parser.add_argument('--action_dim', type=int, default=3, help='Dimensionality of the action space')
 parser.add_argument('--hidden_size', type=int, default=256, help='Size of the RNN hidden state')
 parser.add_argument('--n_layers', type=int, default=1, help='Number of layers in the RNN')
 parser.add_argument('--n_gaussians', type=int, default=5, help='Number of Gaussians in the mixture density network')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+
+# dream visualization args
+parser.add_argument('--val_data_dir', type=str, help='Directory for validation data (raw rollouts)')
+parser.add_argument('--vae_path', type=str, help='Path to the trained VAE model for decoding dreams')
+parser.add_argument('--dream_context_frames', type=int, default=3, help='Number of context frames for the dream')
+parser.add_argument('--dream_length', type=int, default=100, help='Total length of the dream sequence to generate')
+
 args = parser.parse_args()
 
 DATA_DIR = args.data_dir
@@ -99,6 +112,105 @@ model = MDN_RNN(LATENT_DIM, ACTION_DIM, HIDDEN_SIZE, N_LAYERS, N_GAUSSIANS).to(d
 opt = torch.optim.Adam(model.parameters(), LR)
 scheduler = ReduceLROnPlateau(opt, 'min', factor=0.5, patience=5, verbose=True)
 print(f'Total params: {sum(p.numel() for p in model.parameters())}')
+
+# == DREAM VISUALIZATION LOGIC ==
+vae = VAE(latent_dim=LATENT_DIM, inverted=True).to(device)
+vae.load_state_dict(torch.load(args.vae_path, map_location=device))
+vae.eval()
+print("VAE for decoding dreams loaded successfully.")
+
+# We also need a fixed validation sequence to dream from every time
+val_rollout_path = os.path.join(args.val_data_dir, sorted(os.listdir(args.val_data_dir))[0])
+val_rollout = np.load(val_rollout_path)
+val_obs = torch.from_numpy(val_rollout['observations'][:args.dream_length]).float().to(device)
+val_actions = torch.from_numpy(val_rollout['actions'][:args.dream_length]).float().to(device)
+print(f"Loaded fixed validation sequence for dreaming from {val_rollout_path}")
+
+def _sample_from_mdn(pi_logits, mu, sigma_logits, temperature=1.0):
+    """Samples a latent vector from the MDN output with temperature."""
+    if temperature <= 0:
+        print(f'[WARN] Temperature was <= 0, setting it to 1e-8')
+        temperature = 1e-8
+
+    pi = torch.softmax(pi_logits / temperature, dim=-1)
+    sigma = torch.exp(sigma_logits)
+    mixture = torch.distributions.Categorical(probs=pi)
+    k = mixture.sample()
+
+    # Sample from chosen Gaussian
+    mu_k = mu[k]
+    sigma_k = sigma[k]
+    z_next = torch.normal(mu_k, sigma_k)
+
+    return z_next.unsqueeze(0)
+
+@torch.no_grad()
+def generate_dream_sequence(rnn_model, context_frames, actions_for_dream, temperature=0.1):
+    num_context = len(context_frames)
+    num_dream_frames = len(actions_for_dream) - num_context + 1
+    dreamed_latents = []
+
+    # 1. Encode context frames
+    context_z = vae.encode(context_frames.permute(0, 3, 1, 2) / 255.0)
+
+    # 2. Prime RNN with context
+    # Note: Assumes action_dim is 3 for one-hot encoding
+    context_actions_onehot = F.one_hot(actions_for_dream[:num_context-1].long(), num_classes=args.action_dim).float()
+    rnn_input_context = torch.cat([context_z[:-1], context_actions_onehot], dim=-1).unsqueeze(0)
+    _, _, _, _, (h, c) = rnn_model(rnn_input_context)
+
+    current_z = context_z[-1].unsqueeze(0)
+
+    # 3. Generate dream frames
+    for i in range(num_dream_frames):
+        action_idx = num_context - 1 + i
+        action_onehot = F.one_hot(actions_for_dream[action_idx].long(), num_classes=args.action_dim).float().unsqueeze(0)
+        
+        rnn_input = torch.cat([current_z, action_onehot], dim=-1).unsqueeze(0)
+        pi_logits, mu, log_sigma, _, (h, c) = rnn_model(rnn_input, (h, c))
+        
+        z_next = _sample_from_mdn(pi_logits, mu, log_sigma, temperature)
+        dreamed_latents.append(z_next)
+        current_z = z_next
+
+    return torch.cat(dreamed_latents, dim=0)
+
+
+def create_comparison_animation(ground_truth, rnn_model, save_path):
+    # This function now takes the rnn_model directly
+    context_frames_obs = ground_truth[:args.dream_context_frames]
+    
+    # Generate VAE reconstruction and RNN dream
+    decoded_gt = vae.decode(vae.encode(ground_truth.permute(0, 3, 1, 2) / 255.0)).permute(0, 2, 3, 1).cpu().numpy()
+    dreamed_latents = generate_dream_sequence(rnn_model, context_frames_obs, val_actions)
+    dreamed_frames = vae.decode(dreamed_latents).permute(0, 2, 3, 1).cpu().numpy()
+    
+    ground_truth_np = ground_truth.cpu().numpy()
+    actions_np = val_actions.cpu().numpy()
+
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+    
+    def update_frame(frame):
+        fig.suptitle(f'Epoch {epoch+1} - Frame {frame}', fontsize=16)
+        ax1.clear(); ax1.imshow(ground_truth_np[frame]); ax1.set_title(f'Ground Truth'); ax1.axis('off')
+        ax2.clear(); ax2.imshow(decoded_gt[frame]); ax2.set_title(f'VAE Reconstruction'); ax2.axis('off')
+        ax3.clear()
+        if frame < args.dream_context_frames:
+            ax3.imshow(decoded_gt[frame])
+            ax3.set_title(f'RNN Context', color='orange')
+        else:
+            dream_idx = frame - args.dream_context_frames
+            if dream_idx < len(dreamed_frames):
+                ax3.imshow(dreamed_frames[dream_idx])
+            ax3.set_title(f'RNN Dream')
+        ax3.axis('off')
+
+    anim = FuncAnimation(fig, update_frame, frames=len(ground_truth_np), interval=100)
+    anim.save(save_path, writer=PillowWriter(fps=10))
+    plt.close(fig)
+    return save_path
+
+# =============================================================================
 
 # -- Training Loop --
 global_step = 0
@@ -192,6 +304,16 @@ for epoch in range(EPOCHS):
         checkpoint_path = f"checkpoints/{RUN_NAME}.cpt.{epoch+1}.pt"
         torch.save(model.state_dict(), checkpoint_path)
         wandb.save(checkpoint_path)
+
+        # Generate dream to evaluate RNN
+        print(f"\nGenerating dream for epoch {epoch+1}...")
+        model.eval()
+        dream_path = os.path.join("dreams", f"{RUN_NAME}_epoch_{epoch+1}.gif")
+        os.makedirs("dreams", exist_ok=True)
+        create_comparison_animation(val_obs, model, save_path=dream_path)
+        wandb.log({
+            "epoch/dream_visualization": wandb.Video(dream_path, fps=10, format="gif")
+        }, step=global_step)
 
 # -- Save Final Model --
 model_path = RUN_NAME + ".pt"
