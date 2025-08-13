@@ -3,9 +3,10 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 class VAE(nn.Module):
-    def __init__(self, latent_dim):
+    def __init__(self, latent_dim, inverted=False):
         super().__init__()
         self.latent_dim = latent_dim
+        self.inverted = inverted
         
         # -- ENCODER --
         # Input:  N, 3, 64, 64
@@ -39,6 +40,9 @@ class VAE(nn.Module):
         )
 
     def forward(self, x):
+        if self.inverted:
+            x = 1.0 - x
+
         # encoder
         mu, log_var = torch.split(self.encoder(x), self.latent_dim, dim=1) # (N, latent_dim), (N, latent_dim)
 
@@ -49,14 +53,26 @@ class VAE(nn.Module):
         # decoder
         recon_x =  self.decoder(z)
 
+        if self.inverted:
+            recon_x = 1.0 - x
+
         return recon_x, mu, log_var, z
     
     def encode(self, x):
+        if self.inverted:
+            x = 1.0 - x
+
         mu, log_var = torch.split(self.encoder(x), self.latent_dim, dim=1) # (N, latent_dim), (N, latent_dim)
         # reparameterization trick
         eps = torch.randn_like(log_var)
         z = mu + torch.exp(0.5 * log_var) * eps # -> latent_dim
         return z
+    
+    def decode(self, z):
+        recon_x = self.decoder(z)
+        if self.inverted:
+            recon_x = 1.0 - recon_x
+        return recon_x
 
     
     
