@@ -129,20 +129,27 @@ print(f"Loaded fixed validation sequence for dreaming from {val_rollout_path}")
 def _sample_from_mdn(pi_logits, mu, sigma_logits, temperature=1.0):
     """Samples a latent vector from the MDN output with temperature."""
     if temperature <= 0:
-        print(f'[WARN] Temperature was <= 0, setting it to 1e-8')
+        print('[WARN] Temperature was <= 0, setting it to 1e-8')
         temperature = 1e-8
 
-    pi = torch.softmax(pi_logits / temperature, dim=-1)
-    sigma = torch.exp(sigma_logits)
+    # Apply temperature to pi and compute probabilities
+    pi = torch.softmax(pi_logits / temperature, dim=-1)  # [B, C]
+    sigma = torch.exp(sigma_logits)  # [B, C, D]
+
+    # Choose mixture component for each batch element
     mixture = torch.distributions.Categorical(probs=pi)
-    k = mixture.sample()
+    k = mixture.sample()  # [B]
 
-    # Sample from chosen Gaussian
-    mu_k = mu[k]
-    sigma_k = sigma[k]
-    z_next = torch.normal(mu_k, sigma_k)
+    batch_size = mu.shape[0]
+    batch_idx = torch.arange(batch_size, device=mu.device)
 
-    return z_next.unsqueeze(0)
+    # Select the mean and sigma for each chosen component
+    mu_k = mu[batch_idx, k, :]       # [B, D]
+    sigma_k = sigma[batch_idx, k, :] # [B, D]
+
+    # Sample latent vector
+    z_next = torch.normal(mu_k, sigma_k)  # [B, D]
+    return z_next
 
 @torch.no_grad()
 def generate_dream_sequence(rnn_model, context_frames, actions_for_dream, temperature=0.1):
