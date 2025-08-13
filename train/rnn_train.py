@@ -13,7 +13,7 @@ import numpy as np
 import time
 sys.path.append("worldModels")
 sys.path.append(".")
-from modules.mdn_rnn import MDN_RNN, mdn_loss
+from modules.mdn_rnn import MDN_RNN, rnn_loss
 from data.dataset import LatentSequenceDataset
 
 # -- Argument Parser --
@@ -114,9 +114,9 @@ def train():
         data_time_ms = int((time.time() - start_time) * 1000)
         start_time = time.time()
         opt.zero_grad()
-        pi, mu, sigma, _ = model(x)
-        loss = mdn_loss(pi, mu, sigma, y)
-        loss.backward()
+        pi_logits, mu, sigma_logits, done_logits, _ = model(x)
+        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, y)
+        combined_loss.backward()
         model_time_ms = int((time.time() - start_time) * 1000)
 
         # Clip gradients and log pre-clip norm and clip coefficient
@@ -124,7 +124,9 @@ def train():
         clip_coef = 1.0 / (total_norm_unscaled + 1e-6) if total_norm_unscaled > 1.0 else 1.0
 
         wandb.log({
-            "batch/loss": loss.item(),
+            "batch/loss": combined_loss.item(),
+            'batch/latent_loss': latent_loss.item(),
+            'batch/terminal_loss': terminal_loss.item(),
             "batch/grad_norm_unclipped": total_norm_unscaled,
             "batch/grad_clip_coef": clip_coef,
             "profile/data_time_ms": data_time_ms,
@@ -132,19 +134,38 @@ def train():
         }, step=global_step)
 
         opt.step()
-        total_loss += loss.item()
+        total_loss += combined_loss.item()
         global_step += 1
     return total_loss / len(train_loader)
 
 @torch.no_grad()
 def validate():
     model.eval()
-    val_loss = 0.0
+    total_val_loss = 0.0
+    total_latent_loss = 0.0
+    total_terminal_loss = 0.0
+    
     for x, y in tqdm(val_loader, desc="Validating"):
         x, y = x.to(device), y.to(device)
-        pi, mu, sigma, hidden = model(x)
-        val_loss += mdn_loss(pi, mu, sigma, y).item()
-    avg_val_loss = val_loss / len(val_loader)
+        pi_logits, mu, sigma_logits, done_logits, _ = model(x)
+        
+        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, y)
+
+        total_val_loss += combined_loss.item()
+        total_latent_loss += latent_loss.item()
+        total_terminal_loss += terminal_loss.item()
+
+    # Calculate averages
+    avg_val_loss = total_val_loss / len(val_loader)
+    avg_latent_loss = total_latent_loss / len(val_loader)
+    avg_terminal_loss = total_terminal_loss / len(val_loader)
+
+    wandb.log({
+        "epoch/val_loss_combined": avg_val_loss,
+        "epoch/val_loss_latent": avg_latent_loss,
+        "epoch/val_loss_terminal": avg_terminal_loss,
+    }, step=global_step)
+
     return avg_val_loss
 
 # -- Run Training --

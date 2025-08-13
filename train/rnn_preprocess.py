@@ -14,7 +14,8 @@ def _load_rollout(file_path):
     data = np.load(file_path)
     frames = data['observations']
     actions = data['actions']
-    return frames, actions
+    terminals = data['terminals']
+    return frames, actions, terminals
 
 
 def _prepare_frames(frames):
@@ -66,9 +67,9 @@ def precompute_latents_streaming(vae_path, data_dir, output_dir, batch_size, fp1
         out_f = os.path.join(output_dir, os.path.basename(f))
         if (not overwrite) and os.path.exists(out_f):
             continue
-        frames, actions = _load_rollout(f)
+        frames, actions, terminals = _load_rollout(f)
         latents = encode_rollout(vae, device, frames, batch_size, use_fp16=fp16)
-        np.savez_compressed(out_f, latent_observations=latents, actions=actions)
+        np.savez_compressed(out_f, latent_observations=latents, actions=actions, terminals=terminals)
     print("Done.")
 
 
