@@ -131,7 +131,7 @@ class LatentSequenceDataset(Dataset):
         # Slice the tensors to get the required window.
         # We need latents from t=0 to t=L and actions from t=0 to t=L-1.
         latents = episode['latents'][start_idx : end_idx + 1]
-        terminals = episode['terminals'][start_idx : end_idx + 1]
+        terminals = episode['terminals'][start_idx : end_idx + 1].unsqueeze(1) # (N,) -> (N,1) to cat
         actions = episode['actions'][start_idx : end_idx].view(-1, 1)
 
         # Create input `x` and target `y`
@@ -139,8 +139,6 @@ class LatentSequenceDataset(Dataset):
         # Target: latent_{t+1} for t in [0, L-1] and terminal_{t+1}
         x_latents = latents[:-1]
         x = torch.cat((x_latents, actions), dim=-1)
-        y = torch.cat((latents[1:], terminals[1:]), dim=-1)
+        y = torch.cat((latents[1:], terminals[1:]), dim=1)
             
         return x, y
-
-
