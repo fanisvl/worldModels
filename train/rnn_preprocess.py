@@ -43,14 +43,19 @@ def encode_rollout(vae, device, frames_np, batch_size, use_fp16=False):
             latents.append(z.float().cpu().numpy())
     return np.concatenate(latents, axis=0)
 
-def precompute_latents_streaming(vae_path, data_dir, output_dir, batch_size, fp16=False, overwrite=False):
+def precompute_latents_streaming(vae_path, latent_dim, invert_colors, data_dir, output_dir, batch_size, fp16=False, overwrite=False):
     """
     Memory-efficient: iterate rollout files one-by-one, encode, and save.
     """
+
+    if 'inv' in vae_path and not invert_colors:
+        print(f'[WARN] VAE name includes inv meaning it could have been trained with inverted colors, \
+              but inverted argument is false')
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    vae = VAE(32)
+    vae = VAE(latent_dim, invert_colors)
     vae.load_state_dict(torch.load(vae_path, map_location=device))
     if fp16:
         vae.half()
@@ -76,18 +81,23 @@ def precompute_latents_streaming(vae_path, data_dir, output_dir, batch_size, fp1
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Precompute latents for MDN-RNN training (streaming, low RAM).')
     parser.add_argument('--vae_path', type=str, required=True, help='Path to the VAE model file')
+    parser.add_argument('--latent_dim', type=int, required=True, help='VAE latent dim')
     parser.add_argument('--data_dir', type=str, required=True, help='Directory containing rollout_*.npz')
     parser.add_argument('--output_dir', type=str, required=True, help='Directory to save latent rollouts')
     parser.add_argument('--batch_size', type=int, default=64, help='Inference batch size')
     parser.add_argument('--fp16', action='store_true', help='Use half precision for VAE (saves VRAM)')
     parser.add_argument('--overwrite', action='store_true', help='Re-encode even if output file exists')
+    parser.add_argument('--invert_colors', action='store_true', help='VAE was trained on inverted images')
     args = parser.parse_args()
 
     precompute_latents_streaming(
         args.vae_path,
+        args.latent_dim,
+        args.invert_colors,
         args.data_dir,
         args.output_dir,
         args.batch_size,
         fp16=args.fp16,
-        overwrite=args.overwrite
+        overwrite=args.overwrite,
+
     )

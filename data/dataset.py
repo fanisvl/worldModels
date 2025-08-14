@@ -11,9 +11,8 @@ class RolloutDataset(Dataset):
     This version pre-loads all data into RAM.
     """
 
-    def __init__(self, data_dir, transform=None, max_samples=None, invert_colors=False):
+    def __init__(self, data_dir, transform=None, max_samples=None):
         self.transform = transform
-        self.invert_colors = invert_colors
 
         # get paths to all .npz files
         file_paths = sorted([
@@ -57,9 +56,6 @@ class RolloutDataset(Dataset):
         # convert to float32, scale to [0,1], permute to (C, H, W)
         observation = torch.from_numpy(observation).float() / 255.0
         observation = observation.permute(2, 0, 1)
-
-        if self.invert_colors:
-            observation = 1.0 - observation
 
         if self.transform:
             observation = self.transform(observation)

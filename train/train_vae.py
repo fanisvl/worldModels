@@ -54,11 +54,11 @@ KL_ANNEAL_EPOCHS = args.kl_anneal_epochs
 KL_LOSS_THRESHOLD = args.kl_loss_threshold
 
 ddmm = datetime.now().strftime("%d-%m")
-RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.bs{BATCH_SIZE}.sample{MAX_SAMPLES}.{ddmm}'
+RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.bs{BATCH_SIZE}{"" if not INVERT_COLORS else ".inv"}.{ddmm}'
 
 # -- Datasets & Loaders --
-train_dataset = RolloutDataset(data_dir=DATA_DIR, max_samples=MAX_SAMPLES, invert_colors=INVERT_COLORS)
-val_dataset = RolloutDataset(data_dir=VAL_DIR, invert_colors=INVERT_COLORS)
+train_dataset = RolloutDataset(data_dir=DATA_DIR, max_samples=MAX_SAMPLES)
+val_dataset = RolloutDataset(data_dir=VAL_DIR)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
@@ -83,7 +83,7 @@ wandb.init(
 )
 
 # -- Model & Optimizer --
-model = VAE(latent_dim=LATENT_DIM).to(device)
+model = VAE(latent_dim=LATENT_DIM, inverted_colors=INVERT_COLORS).to(device)
 optimizer = optim.Adam(model.parameters(), lr=LR)
 
 # -- Training & Validation Loops --
