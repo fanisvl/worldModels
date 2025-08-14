@@ -69,8 +69,8 @@ class RolloutDataset(Dataset):
 
 class LatentSequenceDataset(Dataset):
     """
-    The MDN-RNN (M) has to model:
-    P(z_{t+1}, done_{t+1} | a_t, z_t, h_t)
+    Dataset class that pre-loads all data from .npz files into RAM
+    to accelerate training by removing I/O bottlenecks.
     """
     def __init__(self, data_dir, sequence_length=100):
         self.sequence_length = sequence_length
@@ -80,14 +80,16 @@ class LatentSequenceDataset(Dataset):
             os.path.join(data_dir, f) for f in os.listdir(data_dir)
             if f.endswith('.npz')
         ])
+
+        # This list will hold all episode data (latents and actions) as tensors in RAM
         self.episodes = []
         print("Pre-loading all data into memory, this might take a moment...")
         for file_path in tqdm(file_paths, desc='Pre-loading data into RAM'):
             with np.load(file_path) as data:
+                # Convert to tensors immediately
                 latents = torch.from_numpy(data['latent_observations']).float()
-                terminals = torch.from_numpy(data['terminals'].astype(np.float32))
                 actions = torch.from_numpy(data['actions']).float()
-                self.episodes.append({'latents': latents, 'actions': actions, 'terminals': terminals})
+                self.episodes.append({'latents': latents, 'actions': actions})
         print("Data pre-loading complete.")
 
         # Create sequence indices from the in-memory data
@@ -117,7 +119,6 @@ class LatentSequenceDataset(Dataset):
 
     def __getitem__(self, idx):
         """
-        P(z_{t+1}, done_{t+1} | a_t, z_t, h_t)
         Returns a single (input_sequence, target_sequence) pair.
         """
         # Retrieve the pre-calculated episode and start frame index
@@ -131,14 +132,13 @@ class LatentSequenceDataset(Dataset):
         # Slice the tensors to get the required window.
         # We need latents from t=0 to t=L and actions from t=0 to t=L-1.
         latents = episode['latents'][start_idx : end_idx + 1]
-        terminals = episode['terminals'][start_idx : end_idx + 1].unsqueeze(1) # (N,) -> (N,1) to cat
         actions = episode['actions'][start_idx : end_idx].view(-1, 1)
 
         # Create input `x` and target `y`
         # Input: (latent_t, action_t) for t in [0, L-1]
-        # Target: latent_{t+1} for t in [0, L-1] and terminal_{t+1}
+        # Target: latent_{t+1} for t in [0, L-1]
         x_latents = latents[:-1]
         x = torch.cat((x_latents, actions), dim=-1)
-        y = torch.cat((latents[1:], terminals[1:]), dim=1)
+        y = latents[1:]
             
         return x, y

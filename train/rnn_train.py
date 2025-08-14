@@ -13,7 +13,7 @@ import numpy as np
 import time
 sys.path.append("worldModels")
 sys.path.append(".")
-from modules.mdn_rnn import MDN_RNN, rnn_loss
+from modules.mdn_rnn import MDN_RNN, mdn_loss
 from data.dataset import LatentSequenceDataset
 
 # -- Argument Parser --
@@ -33,7 +33,6 @@ parser.add_argument('--hidden_size', type=int, default=256, help='Size of the RN
 parser.add_argument('--n_layers', type=int, default=1, help='Number of layers in the RNN')
 parser.add_argument('--n_gaussians', type=int, default=5, help='Number of Gaussians in the mixture density network')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-parser.add_argument('--done_weight', type=float, default=1000.0, help='Weight applied to the terminal/done loss')
 args = parser.parse_args()
 
 DATA_DIR = args.data_dir
@@ -50,7 +49,6 @@ HIDDEN_SIZE = args.hidden_size
 N_LAYERS = args.n_layers
 N_GAUSSIANS = args.n_gaussians
 LR = args.lr
-DONE_WEIGHT = args.done_weight
 ddmm = datetime.now().strftime("%d-%m")
 dataset_name = DATA_DIR.split('/')[-1]
 RUN_NAME = f'rnn.lat{LATENT_DIM}.nl.{N_LAYERS}.h{HIDDEN_SIZE}.seq{SEQUENCE_LENGTH}.e{EPOCHS}.bs{BATCH_SIZE}.{dataset_name}.{ddmm}'
@@ -94,7 +92,6 @@ wandb.init(
         "sequence_length": SEQUENCE_LENGTH,
         "epochs": EPOCHS,
         "seed": SEED,
-        "done_weight": DONE_WEIGHT
     }
 )
 config = wandb.config
@@ -119,9 +116,9 @@ def train():
         data_time_ms = int((time.time() - start_time) * 1000)
         start_time = time.time()
         opt.zero_grad()
-        pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, DONE_WEIGHT, y)
-        combined_loss.backward()
+        pi, mu, sigma, _ = model(x)
+        loss = mdn_loss(pi, mu, sigma, y)
+        loss.backward()
         model_time_ms = int((time.time() - start_time) * 1000)
 
         # Clip gradients and log pre-clip norm and clip coefficient
@@ -129,9 +126,7 @@ def train():
         clip_coef = 1.0 / (total_norm_unscaled + 1e-6) if total_norm_unscaled > 1.0 else 1.0
 
         wandb.log({
-            "batch/loss": combined_loss.item(),
-            'batch/latent_loss': latent_loss.item(),
-            'batch/terminal_loss': terminal_loss.item(),
+            "batch/loss": loss.item(),
             "batch/grad_norm_unclipped": total_norm_unscaled,
             "batch/grad_clip_coef": clip_coef,
             "profile/data_time_ms": data_time_ms,
@@ -139,38 +134,19 @@ def train():
         }, step=global_step)
 
         opt.step()
-        total_loss += combined_loss.item()
+        total_loss += loss.item()
         global_step += 1
     return total_loss / len(train_loader)
 
 @torch.no_grad()
 def validate():
     model.eval()
-    total_val_loss = 0.0
-    total_latent_loss = 0.0
-    total_terminal_loss = 0.0
-    
+    val_loss = 0.0
     for x, y in tqdm(val_loader, desc="Validating"):
         x, y = x.to(device), y.to(device)
-        pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        
-        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, DONE_WEIGHT, y)
-
-        total_val_loss += combined_loss.item()
-        total_latent_loss += latent_loss.item()
-        total_terminal_loss += terminal_loss.item()
-
-    # Calculate averages
-    avg_val_loss = total_val_loss / len(val_loader)
-    avg_latent_loss = total_latent_loss / len(val_loader)
-    avg_terminal_loss = total_terminal_loss / len(val_loader)
-
-    wandb.log({
-        "epoch/val_loss_combined": avg_val_loss,
-        "epoch/val_loss_latent": avg_latent_loss,
-        "epoch/val_loss_terminal": avg_terminal_loss,
-    }, step=global_step)
-
+        pi, mu, sigma, hidden = model(x)
+        val_loss += mdn_loss(pi, mu, sigma, y).item()
+    avg_val_loss = val_loss / len(val_loader)
     return avg_val_loss
 
 # -- Run Training --
