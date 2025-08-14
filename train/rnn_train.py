@@ -33,6 +33,7 @@ parser.add_argument('--hidden_size', type=int, default=256, help='Size of the RN
 parser.add_argument('--n_layers', type=int, default=1, help='Number of layers in the RNN')
 parser.add_argument('--n_gaussians', type=int, default=5, help='Number of Gaussians in the mixture density network')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+parser.add_argument('--done_weight', type=float, default=1000.0, help='Weight applied to the terminal/done loss')
 args = parser.parse_args()
 
 DATA_DIR = args.data_dir
@@ -49,6 +50,7 @@ HIDDEN_SIZE = args.hidden_size
 N_LAYERS = args.n_layers
 N_GAUSSIANS = args.n_gaussians
 LR = args.lr
+DONE_WEIGHT = args.done_weight
 ddmm = datetime.now().strftime("%d-%m")
 dataset_name = DATA_DIR.split('/')[-1]
 RUN_NAME = f'rnn.lat{LATENT_DIM}.nl.{N_LAYERS}.h{HIDDEN_SIZE}.seq{SEQUENCE_LENGTH}.e{EPOCHS}.bs{BATCH_SIZE}.{dataset_name}.{ddmm}'
@@ -92,6 +94,7 @@ wandb.init(
         "sequence_length": SEQUENCE_LENGTH,
         "epochs": EPOCHS,
         "seed": SEED,
+        "done_weight": DONE_WEIGHT
     }
 )
 config = wandb.config
@@ -117,7 +120,7 @@ def train():
         start_time = time.time()
         opt.zero_grad()
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, y)
+        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, DONE_WEIGHT, y)
         combined_loss.backward()
         model_time_ms = int((time.time() - start_time) * 1000)
 

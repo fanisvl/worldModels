@@ -98,7 +98,7 @@ def mdn_loss(pi_logits, mu, sigma_logits, y):
     log_prob = torch.logsumexp(log_weighted, dim=-1) # [N,L]
     return -torch.mean(log_prob)
 
-def rnn_loss(pi_logits, mu, sigma_logits, done_logits, y_target, done_weight=1000.0):
+def rnn_loss(pi_logits, mu, sigma_logits, done_logits, done_weight, y_target):
     """
     y_target: [z_{t+1}, done_{t+1}]
     shape: [N, L, l_dim + 1]
