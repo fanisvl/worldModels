@@ -154,7 +154,7 @@ def validate():
         x, y = x.to(device), y.to(device)
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
         
-        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, y)
+        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, DONE_WEIGHT, y)
 
         total_val_loss += combined_loss.item()
         total_latent_loss += latent_loss.item()
