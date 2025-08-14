@@ -23,6 +23,7 @@ parser.add_argument('--val_dir', type=str, required=True, help='Directory for va
 parser.add_argument('--num_workers', type=int, default=2, help='Number of workers for data loading')
 parser.add_argument('--checkpoint_interval', type=int, default=None, help='Save a model checkpoint every N epochs')
 parser.add_argument('--invert_colors', action='store_true', help='Invert the observation colors in the RolloutDataset')
+parser.add_argument("--desc", type=str, default="", help="Short description of the experiment")
 
 # Hyperparams 
 parser.add_argument('--epochs', type=int, required=True, help='Number of epochs to train for')
@@ -33,7 +34,6 @@ parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
 parser.add_argument('--beta', type=float, default=1.0, help='Final weight of the KL term (beta in beta-VAE)')
 parser.add_argument('--kl_anneal_epochs', type=int, default=0, help='Number of epochs to anneal KL-divergence weight')
 parser.add_argument('--kl_loss_threshold', type=float, default=None, help='Stop optimizing the KL loss term rather than letting it go near zero. Optimize max(threshold, kl_loss)')
-
 
 args = parser.parse_args()
 
@@ -52,9 +52,9 @@ INVERT_COLORS = args.invert_colors
 BETA = args.beta
 KL_ANNEAL_EPOCHS = args.kl_anneal_epochs
 KL_LOSS_THRESHOLD = args.kl_loss_threshold
-
+dataset_name = DATA_DIR.split('/')[-1]
 ddmm = datetime.now().strftime("%d-%m")
-RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.bs{BATCH_SIZE}{"" if not INVERT_COLORS else ".inv"}.{ddmm}'
+RUN_NAME = f'vae.lat{LATENT_DIM}.e{EPOCHS}.bs{BATCH_SIZE}{"" if not INVERT_COLORS else ".inv"}.{dataset_name}.{ddmm}'
 
 # -- Datasets & Loaders --
 train_dataset = RolloutDataset(data_dir=DATA_DIR, max_samples=MAX_SAMPLES)
@@ -70,6 +70,7 @@ os.environ["WANDB_LOG_GPU_PERFORMANCE"] = "true"
 wandb.init(
     project="VAE",
     name=RUN_NAME,
+    notes=args.desc,
     config={
         "latent_dim": LATENT_DIM,
         "learning_rate": LR,
