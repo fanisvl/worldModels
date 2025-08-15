@@ -59,7 +59,7 @@ class VAE(nn.Module):
         return recon_x, mu, log_var, z
     
     def encode(self, x):
-        if self.inverted:
+        if self.inverted_colors:
             x = 1.0 - x
 
         mu, log_var = torch.split(self.encoder(x), self.latent_dim, dim=1) # (N, latent_dim), (N, latent_dim)
@@ -70,7 +70,7 @@ class VAE(nn.Module):
     
     def decode(self, z):
         recon_x = self.decoder(z)
-        if self.inverted:
+        if self.inverted_colors:
             recon_x = 1.0 - recon_x
         return recon_x
 
