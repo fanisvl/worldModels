@@ -79,6 +79,8 @@ class LatentSequenceDataset(Dataset):
 
         # This list will hold all episode data (latents and actions) as tensors in RAM
         self.episodes = []
+        total_positives = 0
+        total_negatives = 0
         print("Pre-loading all data into memory, this might take a moment...")
         for file_path in tqdm(file_paths, desc='Pre-loading data into RAM'):
             with np.load(file_path) as data:
@@ -86,8 +88,22 @@ class LatentSequenceDataset(Dataset):
                 latents = torch.from_numpy(data['latent_observations']).float()
                 actions = torch.from_numpy(data['actions']).float()
                 terminals = torch.from_numpy(data['terminals']).float()
+
+                total_positives += (terminals == 1).sum().item()
+                total_negatives += (terminals == 0).sum().item()
+
                 self.episodes.append({'latents': latents, 'actions': actions, 'terminals': terminals})
         print("Data pre-loading complete.")
+
+        # Compute pos_weight for BCE
+        if total_positives > 0:
+            self.pos_weight = torch.tensor([total_negatives / total_positives], dtype=torch.float32)
+        else:
+            # edge case: no terminal states found
+            self.pos_weight = torch.tensor([1.0], dtype=torch.float32)
+
+        print(f"[LatentSequenceDataset] pos_weight = {self.pos_weight.item():.4f} "
+              f"(negatives={total_negatives}, positives={total_positives})")
 
         # Create sequence indices from the in-memory data
         self.indices = []

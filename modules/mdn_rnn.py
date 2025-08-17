@@ -86,20 +86,21 @@ def mdn_loss(pi_logits, mu, sigma_logits, y):
     log_prob = torch.logsumexp(log_weighted, dim=-1) # [N,L]
     return -torch.mean(log_prob)
 
-def rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, targets, done_loss_weight=1.0):
+def rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, targets, BCE_POS_WEIGHT, DONE_LOSS_WEIGHT=1.0):
     """
     pi_logits: [N, L, n_g] - Raw logits for the mixture components
     mu: [N, L, n_g, l_dim]
     sigma_logits: [N, L, n_g, l_dim]
     done_logits: [N, L]
     y: {'next_latent': [N, L, l_dim], 'is_terminal': [N, L, 1]}
+    BCE_POS_WEIGHT: 
     """
     latent_target = targets['next_latent']
     mdn_l = mdn_loss(pi_logits, mu, sigma_logits, latent_target)
     
     terminal_target = targets['is_terminal'].squeeze(-1) # (N,L)
-    bce_loss_fn = torch.nn.BCEWithLogitsLoss()
+    bce_loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=BCE_POS_WEIGHT)
     terminal_l = bce_loss_fn(done_logits, terminal_target)
 
-    combined_loss = mdn_l + done_loss_weight * terminal_l
+    combined_loss = mdn_l + DONE_LOSS_WEIGHT * terminal_l
     return combined_loss, mdn_l, terminal_l

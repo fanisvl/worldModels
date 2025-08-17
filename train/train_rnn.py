@@ -34,7 +34,7 @@ parser.add_argument('--hidden_size', type=int, default=256, help='Size of the RN
 parser.add_argument('--n_layers', type=int, default=1, help='Number of layers in the RNN')
 parser.add_argument('--n_gaussians', type=int, default=5, help='Number of Gaussians in the mixture density network')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-parser.add_argument('--done_loss_weight', type=float, required=True, help='Weight for done loss')
+parser.add_argument('--done_loss_weight', default=1.0, type=float, help='Weight for done loss')
 args = parser.parse_args()
 
 DATA_DIR = args.data_dir
@@ -77,6 +77,7 @@ train_dataset, val_dataset = random_split(
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+BCE_POS_WEIGHT = dataset.pos_weight.to(device)
 
 # -- W&B Init --
 os.environ["WANDB_LOG_GPU_PERFORMANCE"] = "true"
@@ -130,7 +131,7 @@ def train():
         start_time = time.time()
         opt.zero_grad()
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        combined_loss, latent_loss, terminal_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, DONE_LOSS_WEIGHT)
+        combined_loss, latent_loss, terminal_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, BCE_POS_WEIGHT, DONE_LOSS_WEIGHT)
         combined_loss.backward()
         model_time_ms = int((time.time() - start_time) * 1000)
 
@@ -168,7 +169,7 @@ def validate():
     for x, y in tqdm(val_loader, desc="Validating"):
         x, y = x.to(device), y.to(device)
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        c_loss, l_loss, t_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y)
+        c_loss, l_loss, t_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, BCE_POS_WEIGHT, DONE_LOSS_WEIGHT)
         combined_loss += c_loss.item()
         latent_loss += l_loss.item()
         terminal_loss += t_loss.item()
