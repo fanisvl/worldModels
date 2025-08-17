@@ -20,11 +20,11 @@ class MDN_RNN(nn.Module):
         self.pi = nn.Linear(hidden_size, n_gaussians)
         self.mu = nn.Linear(hidden_size, n_gaussians * latent_dim)
         self.sigma = nn.Linear(hidden_size, n_gaussians * latent_dim)
+        self.done_predictor = nn.Linear(hidden_size, 1)
 
     def forward(self, x, hidden=None):
         lstm_out, hidden = self.lstm(x, hidden)      # (N, L, H_out), hidden state
         logits_pi = self.pi(lstm_out)   # (N, L, n_gaussians)
-        pi = F.softmax(logits_pi, -1)   # (N, L, n_g)
         
         batch_dim, seq_dim, _ = lstm_out.shape
         
@@ -34,7 +34,9 @@ class MDN_RNN(nn.Module):
         sigma_logits = self.sigma(lstm_out)                                                                # (N, L, n_g * l_dim)
         sigma_logits = sigma_logits.view(batch_dim, seq_dim, self.n_gaussians, self.latent_dim) + 1e-3 # (N, L, n_g, l_dim)
 
-        return pi, mu, sigma_logits, hidden
+        done_logits = self.done_predictor(lstm_out).squeeze(-1) # (N, L)
+
+        return logits_pi, mu, sigma_logits, done_logits, hidden
 
     def initial_hidden(self):
         # initialize both h0 and c0: shape (num_layers, batch=1, hidden_dim)
@@ -69,17 +71,35 @@ def log_gaussian_density(mu, sigma_logits, y):
     # log p(y | m_k, s_k)
     return torch.sum(log_prob_per_latent, dim=-1) # [N, L, n_g]
 
-def mdn_loss(pi_logits, mu, sigma, y): 
+def mdn_loss(pi_logits, mu, sigma_logits, y): 
     """
     pi_logits: [N, L, n_g] - Raw logits for the mixture components
     mu: [N, L, n_g, l_dim]
-    raw_sigma: [N, L, n_g, l_dim]
+    sigma_logits: [N, L, n_g, l_dim]
     y: [N, L, l_dim]
     """
-    log_gaussian = log_gaussian_density(mu, sigma, y)
+    log_gaussian = log_gaussian_density(mu, sigma_logits, y)
     log_pi = F.log_softmax(pi_logits, dim=-1)
     log_weighted = log_pi + log_gaussian # [N, L, n_g]
     # log(sum(pi*gaussian)), log-sum-exp helps with numericaly stability by subtracting the maximum value:
     # log(sum(exp(x))) = max(x) + log(sum(exp(x - max(x))))
     log_prob = torch.logsumexp(log_weighted, dim=-1) # [N,L]
     return -torch.mean(log_prob)
+
+def rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, targets, done_loss_weight=1.0):
+    """
+    pi_logits: [N, L, n_g] - Raw logits for the mixture components
+    mu: [N, L, n_g, l_dim]
+    sigma_logits: [N, L, n_g, l_dim]
+    done_logits: [N, L]
+    y: {'next_latent': [N, L, l_dim], 'is_terminal': [N, L, 1]}
+    """
+    latent_target = targets['next_latent']
+    mdn_l = mdn_loss(pi_logits, mu, sigma_logits, latent_target)
+    
+    terminal_target = targets['is_terminal'].squeeze(-1) # (N,L)
+    bce_loss_fn = torch.nn.BCEWithLogitsLoss()
+    terminal_l = bce_loss_fn(done_logits, terminal_target)
+
+    combined_loss = mdn_l + done_loss_weight * terminal_l
+    return combined_loss, mdn_l, terminal_l

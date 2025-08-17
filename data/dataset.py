@@ -85,7 +85,8 @@ class LatentSequenceDataset(Dataset):
                 # Convert to tensors immediately
                 latents = torch.from_numpy(data['latent_observations']).float()
                 actions = torch.from_numpy(data['actions']).float()
-                self.episodes.append({'latents': latents, 'actions': actions})
+                terminals = torch.from_numpy(data['terminals']).float()
+                self.episodes.append({'latents': latents, 'actions': actions, 'terminals': terminals})
         print("Data pre-loading complete.")
 
         # Create sequence indices from the in-memory data
@@ -129,12 +130,13 @@ class LatentSequenceDataset(Dataset):
         # We need latents from t=0 to t=L and actions from t=0 to t=L-1.
         latents = episode['latents'][start_idx : end_idx + 1]
         actions = episode['actions'][start_idx : end_idx].view(-1, 1)
+        terminals = episode['terminals'][start_idx : end_idx + 1]
 
-        # Create input `x` and target `y`
-        # Input: (latent_t, action_t) for t in [0, L-1]
-        # Target: latent_{t+1} for t in [0, L-1]
-        x_latents = latents[:-1]
-        x = torch.cat((x_latents, actions), dim=-1)
-        y = latents[1:]
+        # Input x: (latent_t, action_t)
+        x = torch.cat((latents[:-1], actions), dim=-1)
+
+        # Target y: (latent_{t+1}, terminal_{t+1})
+        y_latents = latents[1:]
+        y_terminals = terminals[1:].unsqueeze(-1) # Shape: (seq_len, 1)
             
-        return x, y
+        return x, {'next_latent': y_latents, 'is_terminal': y_terminals}
