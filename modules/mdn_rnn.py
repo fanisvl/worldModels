@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class MDN_RNN(nn.Module):
-    def __init__(self, latent_dim, action_dim, hidden_size, num_layers, n_gaussians):
+    def __init__(self, latent_dim, action_dim, hidden_size, num_layers, n_gaussians, dropout=0.0):
         super().__init__()
         self.latent_dim = latent_dim
         self.action_dim = action_dim
@@ -17,6 +17,7 @@ class MDN_RNN(nn.Module):
                             num_layers, 
                             batch_first=True)
         
+        self.dropout = nn.Dropout(dropout)
         self.pi = nn.Linear(hidden_size, n_gaussians)
         self.mu = nn.Linear(hidden_size, n_gaussians * latent_dim)
         self.sigma = nn.Linear(hidden_size, n_gaussians * latent_dim)
@@ -24,6 +25,7 @@ class MDN_RNN(nn.Module):
 
     def forward(self, x, hidden=None):
         lstm_out, hidden = self.lstm(x, hidden)      # (N, L, H_out), hidden state
+        lstm_out = self.dropout(lstm_out)
         logits_pi = self.pi(lstm_out)   # (N, L, n_gaussians)
         
         batch_dim, seq_dim, _ = lstm_out.shape

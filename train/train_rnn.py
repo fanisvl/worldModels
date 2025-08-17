@@ -34,6 +34,9 @@ parser.add_argument('--hidden_size', type=int, default=256, help='Size of the RN
 parser.add_argument('--n_layers', type=int, default=1, help='Number of layers in the RNN')
 parser.add_argument('--n_gaussians', type=int, default=5, help='Number of Gaussians in the mixture density network')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+parser.add_argument('--dropout', type=float, default=0.0, help='Dropout probability for the RNN')
+parser.add_argument('--patience_lr', type=int, default=5, help='Patience for ReduceLROnPlateau scheduler')
+parser.add_argument('--patience_epochs', type=int, default=10, help='Patience for early stopping')
 parser.add_argument('--done_loss_weight', default=1.0, type=float, help='Weight for done loss')
 args = parser.parse_args()
 
@@ -53,6 +56,7 @@ N_LAYERS = args.n_layers
 N_GAUSSIANS = args.n_gaussians
 LR = args.lr
 DONE_LOSS_WEIGHT = args.done_loss_weight
+PATIENCE_EPOCHS = args.patience_epochs
 ddmm = datetime.now().strftime("%d-%m")
 dataset_name = DATA_DIR.split('/')[-1]
 RUN_NAME = f'rnn.lat{LATENT_DIM}.nl.{N_LAYERS}.h{HIDDEN_SIZE}.seq{SEQUENCE_LENGTH}.e{EPOCHS}.bs{BATCH_SIZE}.{dataset_name}.{ddmm}'
@@ -87,34 +91,46 @@ wandb.init(
     name=RUN_NAME,
     notes=args.desc,
     config={
+        "data_dir": DATA_DIR,
+        "load_pretrained": LOAD_PRETRAINED,
+        "num_workers": NUM_WORKERS,
+        "checkpoint_interval": CHECKPOINT_INTERVAL,
+        "seed": SEED,
+        "epochs": EPOCHS,
+        "batch_size": BATCH_SIZE,
+        "sequence_length": SEQUENCE_LENGTH,
+        "val_split": VAL_SPLIT,
         "latent_dim": LATENT_DIM,
         "action_dim": ACTION_DIM,
         "hidden_size": HIDDEN_SIZE,
         "n_layers": N_LAYERS,
         "n_gaussians": N_GAUSSIANS,
         "learning_rate": LR,
-        "batch_size": BATCH_SIZE,
-        "sequence_length": SEQUENCE_LENGTH,
-        "epochs": EPOCHS,
-        "seed": SEED,
+        "dropout": args.dropout,
+        "patience_lr": args.patience_lr,
+        "patience_epochs": PATIENCE_EPOCHS,
+        "done_loss_weight": DONE_LOSS_WEIGHT,
     }
 )
 config = wandb.config
 
 # -- Model --
-model = MDN_RNN(LATENT_DIM, ACTION_DIM, HIDDEN_SIZE, N_LAYERS, N_GAUSSIANS).to(device)
+model = MDN_RNN(LATENT_DIM, ACTION_DIM, HIDDEN_SIZE, N_LAYERS, N_GAUSSIANS, dropout=args.dropout).to(device)
 
-if os.path.exists(LOAD_PRETRAINED):
+if LOAD_PRETRAINED and os.path.exists(LOAD_PRETRAINED):
     print(f"Loading pre-trained weights from {LOAD_PRETRAINED}...")
     model.load_state_dict(torch.load(LOAD_PRETRAINED, map_location=device), strict=False)
     print("Weights loaded successfully.")
 
 opt = torch.optim.Adam(model.parameters(), LR)
-scheduler = ReduceLROnPlateau(opt, 'min', factor=0.5, patience=5)
+scheduler = ReduceLROnPlateau(opt, 'min', factor=0.5, patience=args.patience_lr)
 print(f'Total params: {sum(p.numel() for p in model.parameters())}')
 
 # -- Training Loop --
 global_step = 0
+best_val_loss = float('inf')
+epochs_no_improve = 0
+best_model_state = None
 
 def train():
     global global_step
@@ -203,19 +219,39 @@ for epoch in range(EPOCHS):
 
     print(f'Epoch {epoch+1}/{EPOCHS} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}')
 
-    # -- Checkpointing --
+    # -- Checkpointing & Early Stopping --
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        epochs_no_improve = 0
+        best_model_state = model.state_dict()
+        print(f"New best validation loss: {best_val_loss:.4f}")
+    else:
+        epochs_no_improve += 1
+
     if CHECKPOINT_INTERVAL and (epoch + 1) % CHECKPOINT_INTERVAL == 0:
         os.makedirs('checkpoints', exist_ok=True)
         checkpoint_path = f"checkpoints/{RUN_NAME}.cpt.{epoch+1}.pt"
         torch.save(model.state_dict(), checkpoint_path)
         wandb.save(checkpoint_path)
 
-# -- Save Final Model --
+    if epochs_no_improve >= PATIENCE_EPOCHS:
+        print(f"Early stopping triggered after {PATIENCE_EPOCHS} epochs with no improvement.")
+        break
+
+# -- Save Final & Best Model --
+os.makedirs('checkpoints', exist_ok=True)
 model_path = RUN_NAME + ".pt"
 torch.save(model.state_dict(), model_path)
+
+if best_model_state:
+    best_model_path = f"checkpoints/{RUN_NAME}.best.pt"
+    torch.save(best_model_state, best_model_path)
+    wandb.save(best_model_path)
 
 # -- Log Model to W&B --
 artifact = wandb.Artifact(RUN_NAME, type="model")
 artifact.add_file(model_path)
+if best_model_state:
+    artifact.add_file(best_model_path)
 wandb.log_artifact(artifact)
 wandb.finish()
