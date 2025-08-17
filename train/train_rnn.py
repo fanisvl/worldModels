@@ -122,7 +122,8 @@ def train():
 
     for x, y in tqdm(train_loader, desc="Training"):
         start_time = time.time()
-        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+        x = x.to(device, non_blocking=True)
+        y = y = {k: v.to(device, non_blocking=True) for k, v in y.items()}
         data_time_ms = int((time.time() - start_time) * 1000)
         start_time = time.time()
         opt.zero_grad()
