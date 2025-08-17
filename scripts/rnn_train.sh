@@ -1,0 +1,17 @@
+python3 ../train/train_rnn.py \
+  --data_dir /media/fanis/Intenso/wm18/latent64_vizdoom_1_32_2.5k \
+  --load_pretrained /home/fanis/repos/worldModels/models/rnn/rnn.lat64.nl.1.h512.seq100.e100.bs64.latent64_vizdoom_1_32_2.5k.15-08.pt \
+  --desc 'test done loss weight' \
+  --checkpoint_interval 1 \
+  --seed 99 \
+  --epochs 1 \
+  --batch_size 64 \
+  --sequence_length 100 \
+  --val_split 0.999 \
+  --latent_dim 64 \
+  --action_dim 1 \
+  --hidden_size 512 \
+  --n_layers 1 \
+  --n_gaussians 5 \
+  --lr 1e-3 \
+  --done_loss_weight 20.0 
