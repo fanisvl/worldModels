@@ -100,7 +100,6 @@ def rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, targets, BCE_POS
     
     terminal_target = targets['is_terminal'].squeeze(-1) # (N,L)
     bce_loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=BCE_POS_WEIGHT)
-    terminal_l = bce_loss_fn(done_logits, terminal_target)
-
-    combined_loss = mdn_l + DONE_LOSS_WEIGHT * terminal_l
+    terminal_l = DONE_LOSS_WEIGHT * bce_loss_fn(done_logits, terminal_target)
+    combined_loss = mdn_l + terminal_l
     return combined_loss, mdn_l, terminal_l
