@@ -86,20 +86,34 @@ def mdn_loss(pi_logits, mu, sigma_logits, y):
     log_prob = torch.logsumexp(log_weighted, dim=-1) # [N,L]
     return -torch.mean(log_prob)
 
-def rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, targets, BCE_POS_WEIGHT, DONE_LOSS_WEIGHT=1.0):
+def rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, targets, BCE_POS_WEIGHT, latent_done_ratio=None):
     """
     pi_logits: [N, L, n_g] - Raw logits for the mixture components
     mu: [N, L, n_g, l_dim]
     sigma_logits: [N, L, n_g, l_dim]
     done_logits: [N, L]
     y: {'next_latent': [N, L, l_dim], 'is_terminal': [N, L, 1]}
-    BCE_POS_WEIGHT: 
+    BCE_POS_WEIGHT: tensor
+    latent_done_ratio: float - Desired ratio of latent_loss / terminal_loss
     """
     latent_target = targets['next_latent']
     mdn_l = mdn_loss(pi_logits, mu, sigma_logits, latent_target)
     
     terminal_target = targets['is_terminal'].squeeze(-1) # (N,L)
     bce_loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=BCE_POS_WEIGHT)
-    terminal_l = DONE_LOSS_WEIGHT * bce_loss_fn(done_logits, terminal_target)
+    terminal_l_unweighted = bce_loss_fn(done_logits, terminal_target)
+
+    done_loss_weight = 1.0
+    # Dynamically weight terminal loss to match the desired ratio with the latent loss
+    if latent_done_ratio:
+        with torch.no_grad():
+            latent_loss_val = mdn_l.detach()
+            terminal_loss_val = terminal_l_unweighted.detach()
+            # to avoid division by zero
+            if terminal_loss_val < 1e-6:
+                terminal_loss_val += 1e-6
+            done_loss_weight = latent_loss_val / (latent_done_ratio * terminal_loss_val)
+
+    terminal_l = done_loss_weight * terminal_l_unweighted
     combined_loss = mdn_l + terminal_l
-    return combined_loss, mdn_l, terminal_l
+    return combined_loss, mdn_l, done_loss_weight, terminal_l_unweighted, terminal_l

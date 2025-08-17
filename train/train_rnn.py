@@ -34,11 +34,13 @@ parser.add_argument('--hidden_size', type=int, default=256, help='Size of the RN
 parser.add_argument('--n_layers', type=int, default=1, help='Number of layers in the RNN')
 parser.add_argument('--n_gaussians', type=int, default=5, help='Number of Gaussians in the mixture density network')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-parser.add_argument('--done_loss_weight', default=1.0, type=float, help='Weight for done loss')
+parser.add_argument('--latent_done_ratio', default=None, type=float, help='Ratio of latent loss to done loss for balancing.')
 args = parser.parse_args()
+
 
 DATA_DIR = args.data_dir
 LOAD_PRETRAINED = args.load_pretrained
+DESC = args.desc
 NUM_WORKERS = args.num_workers
 CHECKPOINT_INTERVAL = args.checkpoint_interval
 SEED = args.seed
@@ -52,7 +54,30 @@ HIDDEN_SIZE = args.hidden_size
 N_LAYERS = args.n_layers
 N_GAUSSIANS = args.n_gaussians
 LR = args.lr
-DONE_LOSS_WEIGHT = args.done_loss_weight
+LATENT_DONE_RATIO = args.latent_done_ratio
+
+print("=" * 50)
+print("TRAINING CONFIGURATION")
+print("=" * 50)
+print(f"Data directory: {DATA_DIR}")
+print(f"Load pretrained: {LOAD_PRETRAINED}")
+print(f"Description: {DESC}")
+print(f"Number of workers: {NUM_WORKERS}")
+print(f"Checkpoint interval: {CHECKPOINT_INTERVAL}")
+print(f"Seed: {SEED}")
+print(f"Epochs: {EPOCHS}")
+print(f"Batch size: {BATCH_SIZE}")
+print(f"Sequence length: {SEQUENCE_LENGTH}")
+print(f"Validation split: {VAL_SPLIT}")
+print(f"Latent dimension: {LATENT_DIM}")
+print(f"Action dimension: {ACTION_DIM}")
+print(f"Hidden size: {HIDDEN_SIZE}")
+print(f"Number of layers: {N_LAYERS}")
+print(f"Number of Gaussians: {N_GAUSSIANS}")
+print(f"Learning rate: {LR}")
+print(f"Latent/Done Loss Ratio: {LATENT_DONE_RATIO}")
+print("=" * 50)
+
 ddmm = datetime.now().strftime("%d-%m")
 dataset_name = DATA_DIR.split('/')[-1]
 RUN_NAME = f'rnn.lat{LATENT_DIM}.nl.{N_LAYERS}.h{HIDDEN_SIZE}.seq{SEQUENCE_LENGTH}.e{EPOCHS}.bs{BATCH_SIZE}.{dataset_name}.{ddmm}'
@@ -85,18 +110,24 @@ wandb.login()
 wandb.init(
     project="mdn-rnn",
     name=RUN_NAME,
-    notes=args.desc,
+    notes=DESC,
     config={
+        "data_dir": DATA_DIR,
+        "load_pretrained": LOAD_PRETRAINED,
+        "num_workers": NUM_WORKERS,
+        "checkpoint_interval": CHECKPOINT_INTERVAL,
+        "seed": SEED,
+        "epochs": EPOCHS,
+        "batch_size": BATCH_SIZE,
+        "sequence_length": SEQUENCE_LENGTH,
+        "val_split": VAL_SPLIT,
         "latent_dim": LATENT_DIM,
         "action_dim": ACTION_DIM,
         "hidden_size": HIDDEN_SIZE,
         "n_layers": N_LAYERS,
         "n_gaussians": N_GAUSSIANS,
         "learning_rate": LR,
-        "batch_size": BATCH_SIZE,
-        "sequence_length": SEQUENCE_LENGTH,
-        "epochs": EPOCHS,
-        "seed": SEED,
+        "latent_done_ratio": LATENT_DONE_RATIO,
     }
 )
 config = wandb.config
@@ -122,6 +153,8 @@ def train():
     total_loss = 0.0
     total_latent_loss = 0.0
     total_terminal_loss = 0.0
+    total_terminal_loss_unweighted = 0.0
+    total_done_loss_weight = 0.0
 
     for x, y in tqdm(train_loader, desc="Training"):
         start_time = time.time()
@@ -131,7 +164,7 @@ def train():
         start_time = time.time()
         opt.zero_grad()
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        combined_loss, latent_loss, terminal_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, BCE_POS_WEIGHT, DONE_LOSS_WEIGHT)
+        combined_loss, latent_loss, done_loss_weight, terminal_loss_unweighted, terminal_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, BCE_POS_WEIGHT, LATENT_DONE_RATIO)
         combined_loss.backward()
         model_time_ms = int((time.time() - start_time) * 1000)
 
@@ -142,7 +175,9 @@ def train():
         wandb.log({
             "batch/loss": combined_loss.item(),
             "batch/latent_loss": latent_loss.item(),
-            "batch/terminal_loss": terminal_loss.item(),
+            "batch/terminal_loss_weighted": terminal_loss.item(),
+            "batch/terminal_loss_unweighted": terminal_loss_unweighted.item(),
+            "batch/done_loss_weight": done_loss_weight,
             "batch/grad_norm_unclipped": total_norm_unscaled,
             "batch/grad_clip_coef": clip_coef,
             "profile/data_time_ms": data_time_ms,
@@ -153,11 +188,16 @@ def train():
         total_loss += combined_loss.item()
         total_latent_loss += latent_loss.item()
         total_terminal_loss += terminal_loss.item()
+        total_terminal_loss_unweighted += terminal_loss_unweighted.item()
+        total_done_loss_weight += done_loss_weight
         global_step += 1
     
-    return (total_loss / len(train_loader), 
-            total_latent_loss / len(train_loader), 
-            total_terminal_loss / len(train_loader))
+    num_batches = len(train_loader)
+    return (total_loss / num_batches, 
+            total_latent_loss / num_batches, 
+            total_terminal_loss / num_batches,
+            total_terminal_loss_unweighted / num_batches,
+            total_done_loss_weight / num_batches)
 
 @torch.no_grad()
 def validate():
@@ -165,26 +205,30 @@ def validate():
     combined_loss = 0.0
     latent_loss = 0.0
     terminal_loss = 0.0
+    terminal_loss_unweighted = 0.0
     
     for x, y in tqdm(val_loader, desc="Validating"):
         x = x.to(device)
         y = y = {k: v.to(device, non_blocking=True) for k, v in y.items()}
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        c_loss, l_loss, t_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, BCE_POS_WEIGHT, DONE_LOSS_WEIGHT)
+        c_loss, l_loss, _, t_loss_unweighted, t_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, BCE_POS_WEIGHT, LATENT_DONE_RATIO)
         combined_loss += c_loss.item()
         latent_loss += l_loss.item()
         terminal_loss += t_loss.item()
+        terminal_loss_unweighted += t_loss_unweighted.item()
 
-    val_loss = combined_loss / len(val_loader)
-    avg_latent_loss = latent_loss / len(val_loader)
-    avg_terminal_loss = terminal_loss / len(val_loader)
+    num_batches = len(val_loader)
+    val_loss = combined_loss / num_batches
+    avg_latent_loss = latent_loss / num_batches
+    avg_terminal_loss = terminal_loss / num_batches
+    avg_terminal_loss_unweighted = terminal_loss_unweighted / num_batches
     
-    return val_loss, avg_latent_loss, avg_terminal_loss
+    return val_loss, avg_latent_loss, avg_terminal_loss, avg_terminal_loss_unweighted
 
 # -- Run Training --
 for epoch in range(EPOCHS):
-    train_loss, train_latent_loss, train_terminal_loss = train()
-    val_loss, val_latent_loss, val_terminal_loss = validate()
+    train_loss, train_latent_loss, train_terminal_loss, train_terminal_loss_unweighted, avg_done_weight = train()
+    val_loss, val_latent_loss, val_terminal_loss, val_terminal_loss_unweighted = validate()
 
     # Step the scheduler
     scheduler.step(val_loss)
@@ -194,10 +238,13 @@ for epoch in range(EPOCHS):
         "epoch": epoch + 1,
         "epoch/train_loss": train_loss,
         "epoch/train_latent_loss": train_latent_loss,
-        "epoch/train_terminal_loss": train_terminal_loss,
+        "epoch/train_terminal_loss_weighted": train_terminal_loss,
+        "epoch/train_terminal_loss_unweighted": train_terminal_loss_unweighted,
+        "epoch/avg_done_loss_weight": avg_done_weight,
         "epoch/val_loss": val_loss,
         "epoch/val_latent_loss": val_latent_loss,
-        "epoch/val_terminal_loss": val_terminal_loss,
+        "epoch/val_terminal_loss_weighted": val_terminal_loss,
+        "epoch/val_terminal_loss_unweighted": val_terminal_loss_unweighted,
         "epoch/lr": opt.param_groups[0]['lr']
     }, step=global_step)
 
