@@ -167,7 +167,8 @@ def validate():
     terminal_loss = 0.0
     
     for x, y in tqdm(val_loader, desc="Validating"):
-        x, y = x.to(device), y.to(device)
+        x = x.to(device)
+        y = y = {k: v.to(device, non_blocking=True) for k, v in y.items()}
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
         c_loss, l_loss, t_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, BCE_POS_WEIGHT, DONE_LOSS_WEIGHT)
         combined_loss += c_loss.item()
