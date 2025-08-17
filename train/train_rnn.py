@@ -13,12 +13,14 @@ import numpy as np
 import time
 sys.path.append("worldModels")
 sys.path.append(".")
-from modules.mdn_rnn import MDN_RNN, rnn_loss
+from modules.mdn_rnn import MDN_RNN, rnn_combined_loss
 from data.dataset import LatentSequenceDataset
 
 # -- Argument Parser --
 parser = argparse.ArgumentParser(description="MDN-RNN Training")
 parser.add_argument('--data_dir', type=str, required=True, help='Directory for training data (latents)')
+parser.add_argument('--load_pretrained', type=str, default=None, help='Start from a pre-trained model')
+parser.add_argument("--desc", type=str, default="", help="Short description of the experiment")
 parser.add_argument('--num_workers', type=int, default=2, help='Number of workers for data loading')
 parser.add_argument('--checkpoint_interval', type=int, default=None, help='Save a model checkpoint every N epochs')
 parser.add_argument('--seed', type=int, default=99, help='Random seed for reproducibility')
@@ -35,6 +37,7 @@ parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
 args = parser.parse_args()
 
 DATA_DIR = args.data_dir
+LOAD_PRETRAINED = args.load_pretrained
 NUM_WORKERS = args.num_workers
 CHECKPOINT_INTERVAL = args.checkpoint_interval
 SEED = args.seed
@@ -79,6 +82,7 @@ wandb.login()
 wandb.init(
     project="mdn-rnn",
     name=RUN_NAME,
+    notes=args.desc,
     config={
         "latent_dim": LATENT_DIM,
         "action_dim": ACTION_DIM,
@@ -96,6 +100,12 @@ config = wandb.config
 
 # -- Model --
 model = MDN_RNN(LATENT_DIM, ACTION_DIM, HIDDEN_SIZE, N_LAYERS, N_GAUSSIANS).to(device)
+
+if os.path.exists(LOAD_PRETRAINED):
+    print(f"Loading pre-trained weights from {LOAD_PRETRAINED}...")
+    model.load_state_dict(torch.load(LOAD_PRETRAINED, map_location=device), strict=False)
+    print("Weights loaded successfully.")
+
 opt = torch.optim.Adam(model.parameters(), LR)
 scheduler = ReduceLROnPlateau(opt, 'min', factor=0.5, patience=5)
 print(f'Total params: {sum(p.numel() for p in model.parameters())}')
@@ -107,6 +117,8 @@ def train():
     global global_step
     model.train()
     total_loss = 0.0
+    total_latent_loss = 0.0
+    total_terminal_loss = 0.0
 
     for x, y in tqdm(train_loader, desc="Training"):
         start_time = time.time()
@@ -115,7 +127,7 @@ def train():
         start_time = time.time()
         opt.zero_grad()
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, y)
+        combined_loss, latent_loss, terminal_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y)
         combined_loss.backward()
         model_time_ms = int((time.time() - start_time) * 1000)
 
@@ -125,8 +137,8 @@ def train():
 
         wandb.log({
             "batch/loss": combined_loss.item(),
-            'batch/latent_loss': latent_loss.item(),
-            'batch/terminal_loss': terminal_loss.item(),
+            "batch/latent_loss": latent_loss.item(),
+            "batch/terminal_loss": terminal_loss.item(),
             "batch/grad_norm_unclipped": total_norm_unscaled,
             "batch/grad_clip_coef": clip_coef,
             "profile/data_time_ms": data_time_ms,
@@ -135,43 +147,39 @@ def train():
 
         opt.step()
         total_loss += combined_loss.item()
+        total_latent_loss += latent_loss.item()
+        total_terminal_loss += terminal_loss.item()
         global_step += 1
-    return total_loss / len(train_loader)
+    
+    return (total_loss / len(train_loader), 
+            total_latent_loss / len(train_loader), 
+            total_terminal_loss / len(train_loader))
 
 @torch.no_grad()
 def validate():
     model.eval()
-    total_val_loss = 0.0
-    total_latent_loss = 0.0
-    total_terminal_loss = 0.0
+    combined_loss = 0.0
+    latent_loss = 0.0
+    terminal_loss = 0.0
     
     for x, y in tqdm(val_loader, desc="Validating"):
         x, y = x.to(device), y.to(device)
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        
-        latent_loss, terminal_loss, combined_loss = rnn_loss(pi_logits, mu, sigma_logits, done_logits, y)
+        c_loss, l_loss, t_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y)
+        combined_loss += c_loss.item()
+        latent_loss += l_loss.item()
+        terminal_loss += t_loss.item()
 
-        total_val_loss += combined_loss.item()
-        total_latent_loss += latent_loss.item()
-        total_terminal_loss += terminal_loss.item()
-
-    # Calculate averages
-    avg_val_loss = total_val_loss / len(val_loader)
-    avg_latent_loss = total_latent_loss / len(val_loader)
-    avg_terminal_loss = total_terminal_loss / len(val_loader)
-
-    wandb.log({
-        "epoch/val_loss_combined": avg_val_loss,
-        "epoch/val_loss_latent": avg_latent_loss,
-        "epoch/val_loss_terminal": avg_terminal_loss,
-    }, step=global_step)
-
-    return avg_val_loss
+    val_loss = combined_loss / len(val_loader)
+    avg_latent_loss = latent_loss / len(val_loader)
+    avg_terminal_loss = terminal_loss / len(val_loader)
+    
+    return val_loss, avg_latent_loss, avg_terminal_loss
 
 # -- Run Training --
 for epoch in range(EPOCHS):
-    train_loss = train()
-    val_loss = validate()
+    train_loss, train_latent_loss, train_terminal_loss = train()
+    val_loss, val_latent_loss, val_terminal_loss = validate()
 
     # Step the scheduler
     scheduler.step(val_loss)
@@ -180,7 +188,11 @@ for epoch in range(EPOCHS):
     wandb.log({
         "epoch": epoch + 1,
         "epoch/train_loss": train_loss,
+        "epoch/train_latent_loss": train_latent_loss,
+        "epoch/train_terminal_loss": train_terminal_loss,
         "epoch/val_loss": val_loss,
+        "epoch/val_latent_loss": val_latent_loss,
+        "epoch/val_terminal_loss": val_terminal_loss,
         "epoch/lr": opt.param_groups[0]['lr']
     }, step=global_step)
 
