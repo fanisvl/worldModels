@@ -34,6 +34,7 @@ parser.add_argument('--hidden_size', type=int, default=256, help='Size of the RN
 parser.add_argument('--n_layers', type=int, default=1, help='Number of layers in the RNN')
 parser.add_argument('--n_gaussians', type=int, default=5, help='Number of Gaussians in the mixture density network')
 parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+parser.add_argument('--done_loss_weight', type=float, required=True, help='Weight for done loss')
 args = parser.parse_args()
 
 DATA_DIR = args.data_dir
@@ -51,6 +52,7 @@ HIDDEN_SIZE = args.hidden_size
 N_LAYERS = args.n_layers
 N_GAUSSIANS = args.n_gaussians
 LR = args.lr
+DONE_LOSS_WEIGHT = args.done_loss_weight
 ddmm = datetime.now().strftime("%d-%m")
 dataset_name = DATA_DIR.split('/')[-1]
 RUN_NAME = f'rnn.lat{LATENT_DIM}.nl.{N_LAYERS}.h{HIDDEN_SIZE}.seq{SEQUENCE_LENGTH}.e{EPOCHS}.bs{BATCH_SIZE}.{dataset_name}.{ddmm}'
@@ -128,7 +130,7 @@ def train():
         start_time = time.time()
         opt.zero_grad()
         pi_logits, mu, sigma_logits, done_logits, _ = model(x)
-        combined_loss, latent_loss, terminal_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y)
+        combined_loss, latent_loss, terminal_loss = rnn_combined_loss(pi_logits, mu, sigma_logits, done_logits, y, DONE_LOSS_WEIGHT)
         combined_loss.backward()
         model_time_ms = int((time.time() - start_time) * 1000)
 
