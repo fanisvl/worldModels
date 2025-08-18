@@ -40,11 +40,13 @@ class MDN_RNN(nn.Module):
 
         return logits_pi, mu, sigma_logits, done_logits, hidden
 
-    def initial_hidden(self):
+    def initial_hidden(self, batch_size, device=None):
         # initialize both h0 and c0: shape (num_layers, batch=1, hidden_dim)
         num_layers = self.num_layers   # or hard‐code 1/2
-        h0 = torch.zeros(num_layers, 1, self.hidden_size)
-        c0 = torch.zeros(num_layers, 1, self.hidden_size)
+        if device is None:
+            device = next(self.parameters()).device
+        h0 = torch.zeros(num_layers, batch_size, self.hidden_size, device=device)
+        c0 = torch.zeros(num_layers, batch_size, self.hidden_size, device=device)
         rnn_hidden = (h0, c0)
         return rnn_hidden
     
