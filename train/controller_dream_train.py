@@ -312,7 +312,7 @@ if __name__ == '__main__':
                     checkpoint_path = os.path.join(CHECKPOINT_DIR, f'controller_gen_{gen}_score_{real_world_score:.2f}.pt')
                     torch.save(best_controller_for_validation.state_dict(), checkpoint_path)
                     print(f"\nNew best validation score: {real_world_score:.2f}. Saved checkpoint to {checkpoint_path}\n")
-            wandb.log(log_data, step=gen + 1)
+            wandb.log(log_data)
 
     final_best_params, final_best_reward, _, _ = cmaes.result()
 
