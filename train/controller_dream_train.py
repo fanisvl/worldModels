@@ -24,7 +24,7 @@ def preprocess_obs(obs):
     tensor_obs = torch.from_numpy(normalized).permute(2, 0, 1).unsqueeze(0)
     return tensor_obs
 
-def validate_in_real_env(controller, config, n_rollouts=100, is_random=False):
+def validate_in_real_env(controller, config, n_rollouts=100, is_random=False, render_mode=None):
     """
     Validates a controller (or random policy) in the real VizDoom environment.
     Returns the average survival time over n_rollouts.
@@ -44,7 +44,8 @@ def validate_in_real_env(controller, config, n_rollouts=100, is_random=False):
     if not is_random:
         controller.to(device).eval()
 
-    real_env = gym.make("VizdoomTakeCover-v0")
+    real_env = gym.make("VizdoomTakeCover-v0", render_mode=render_mode)
+
     total_reward = 0.0
 
     for i in tqdm(range(n_rollouts), desc=f"Validating ({'Random' if is_random else 'Controller'})"):
@@ -77,12 +78,11 @@ def validate_in_real_env(controller, config, n_rollouts=100, is_random=False):
             episode_reward += reward
 
             if not is_random:
-                # Update RNN state even though we don't use its output for dreaming
                 preprocessed_obs = preprocess_obs(obs_dict).to(device)
                 with torch.no_grad():
+                    # update RNN state (it's used as memory)
                     z = vae.encode(preprocessed_obs) 
                     action_tensor = torch.tensor([action], device=device)
-                    # print(f'z shape: {z.shape}, action shape: {action_tensor.shape}')
                     rnn_input = torch.cat([z.squeeze(), action_tensor], dim=-1).unsqueeze(0).unsqueeze(0)
                     _, _, _, _, rnn_hidden = rnn(rnn_input, rnn_hidden)
         

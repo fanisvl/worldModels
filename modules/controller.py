@@ -73,3 +73,6 @@ def set_params_from_flat(model, flat_params_vector):
         param_slice = flat_params_vector[current_pos : current_pos + num_elements]
         p.data = torch.from_numpy(param_slice).view(shape).float()
         current_pos += num_elements
+
+def load_controller(model, path):
+    model.load_state_dict(torch.load(path))
