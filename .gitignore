@@ -2,3 +2,10 @@ notebooks/cifar10
 .vscode
 data/saved_rollouts
 */__pycache__
+models/
+venv/
+wandb/
+data/vizdoom_test_10
+data/test_5_1_32
+checkpoints/
+*_vizdoom.ini*
