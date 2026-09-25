@@ -1,27 +1,62 @@
-## Implementation of World Models - Ha, Schmidhuber (2018)
+# World Models
 
-In this paper, 'world model' refers to a compressed (latent) representation of the environment and its dynamics. The goal is to learn this world model and utilize it to train a policy entirely within it, without the need for expensive trials in the real environment. 
+Learning to dream in Doom. A PyTorch implementation of *World Models* (Ha & Schmidhuber, 2018), using ViZDoom's Take Cover environment.
 
-The WM consists of three main components. 
+The model watches recorded gameplay, learns to compress frames and predict what comes next, then becomes an environment of its own. A small controller can train inside that learned world.
 
-1. A Variational Autoencoder which compresses the pixel observation input (dim=64x64x3) into a latent representation (dim=64).
-2. A Mixture Density RNN which models the environment dynamics in latent space by predicting the next latent state z_{t+1} given the current latent state z_t and an action a_t. A Mixture of Gaussians is used to account for the inherent ambiguity of future states, instead of simply predicting the next state deterministically which would yield the average of all possible future states.
-3. A Controller, which is linear layer that maps the current latent state z_t and the RNN hidden state to an action.
+![Recorded gameplay, VAE reconstruction, and an imagined rollout in ViZDoom](demo/media/rnn64_1_32_15-08.gif)
 
-## Variational Autoencoder
+Left to right: **real gameplay → VAE reconstruction → RNN dream**. After the initial context, the dream feeds its own predictions back in, following the recorded actions without seeing any more real frames. Watch where it starts to drift.
 
-A vanilla autoencoder is a neural network trained to reconstruct its input. It consists of an encoder that compresses a high-dimensional input x into a lower-dimensional latent representation z, and a decoder that reconstructs 
-x from z. Because of the bottleneck and the reconstruction objective, the model learns to retain in z the most relevant information needed to faithfully reconstruct x.
+## A little more memory
 
-The problem with the vanilla autoencoder is that the learned latent space of z is arbitrary and unstructured, so it's hard to sample new points in latent space and the prediction of the next latent state by the RNN will be difficult later. 
+One frame tells you where a fireball is. A few frames can tell you where it's going. These clips compare giving the RNN one or five real frames before letting it predict the rest.
 
-- variational (N prior)
+**1 context frame**
 
-also explain posterior collapse
+![Imagined trajectory after one context frame](demo/media/trajectory_context/context1_rnn64_1_32_15-08.gif)
 
+**5 context frames**
 
-## Mixture Density RNN
+![Imagined trajectory after five context frames](demo/media/trajectory_context/context5_rnn64_1_32_15-08.gif)
 
-"A Mixture of Gaussians is used to account for the inherent ambiguity of future states, instead of simply predicting the next state deterministically which would yield the average of all possible future states."
-explain this a bit more
+<details>
+<summary>An earlier experiment with a 32-dimensional latent space</summary>
+
+![Earlier 32-dimensional model reconstructing and predicting an approaching fireball](demo/media/rnn.lat32.18-07.cpt.40.gif)
+
+</details>
+
+## Under the hood
+
+- **VAE**: compresses each 64 × 64 RGB frame into a latent vector, and decodes it back into an image.
+- **MDN-RNN**: takes the latent vector and an action, then predicts a mixture of possible next states and the probability of the episode ending. Sampling from that mixture produces the dream.
+- **Controller**: a linear layer that chooses an action from the latent vector and the RNN's hidden and cell states. Trained with CMA-ES inside the dream, with evaluation in the real environment.
+
+The clips above show reconstruction and prediction, rather than controller performance.
+
+## Try the dream
+
+Two interactive demos, run from the repo root:
+
+```bash
+python3 demo/dream.py           # move around inside the learned world
+python3 demo/grounded_dream.py  # real environment and dream side by side
+```
+
+These need trained VAE and RNN checkpoints; weights and rollout datasets aren't included. Set `VAE_PATH`, `RNN_PATH`, and the matching model settings near the top of each script. The demos use PyTorch, NumPy, Gymnasium, ViZDoom, and OpenCV; the comparison demo also imports `cma` through the controller module. A desktop display is needed for the OpenCV windows.
+
+Use **A / D** to move and **Q / Esc** to quit. In the comparison demo, **G** brings the dream back to the current real frame. **C** toggles the controller when a controller checkpoint is loaded; set `USE_CONTROLLER = False` to start with manual control.
+
+## Explore the code
+
+The training path is: collect gameplay → train the VAE → encode the rollouts → train the RNN → train the controller in the dream.
+
+| Where | What's there |
+| --- | --- |
+| [data/](data/) | Random-action rollout collection, datasets, and inspection tools |
+| [train/](train/) | VAE and RNN training, latent preprocessing, and CMA-ES controller training |
+| [modules/](modules/) | The models, dream environment, and comparison animation code |
+| [notebooks/wm_eval.ipynb](notebooks/wm_eval.ipynb) | Reconstruction and dream rollout comparisons |
+| [notebooks/vae_latent_experiments.ipynb](notebooks/vae_latent_experiments.ipynb) | Experiments with the VAE's latent space |
 
