@@ -1,6 +1,6 @@
 # World Models
 
-A PyTorch implementation of [*World Models* (Ha & Schmidhuber, 2018)]([url](https://arxiv.org/pdf/1803.10122)), trained on the Take Cover environment in ViZDoom.
+A PyTorch implementation of [*World Models* (Ha & Schmidhuber, 2018)](https://arxiv.org/pdf/1803.10122), trained on the Take Cover environment in ViZDoom.
 
 A VAE compresses each frame into a small latent vector. An RNN learns to predict the next latent vector given an action. A small controller is then trained using the RNN's predictions in place of the real game.
 
