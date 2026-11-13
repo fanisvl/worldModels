@@ -28,16 +28,20 @@ These clips compare giving the RNN one real frame or five before it predicts the
 
 ## Running the demos
 
-Both demos are run from the repo root.
+Set up Python 3.12 with uv from the repo root.
 
+```bash
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
-python3 demo/dream.py           # play inside the learned model
-python3 demo/grounded_dream.py  # real environment and rollout side by side
+
+```bash
+python demo/dream.py           # play inside the learned model
+python demo/grounded_dream.py  # real environment and rollout side by side
 ```
 
-Trained VAE and RNN checkpoints are required. The weights and rollout datasets are not included in the repo (TODO: add HF link). Set `VAE_PATH`, `RNN_PATH` and the matching model settings near the top of each script.
-
-Use A and D to move, and Q or Esc to quit. In the comparison demo, G resets the rollout to the current real frame. C toggles the controller when a controller checkpoint is loaded. Set `USE_CONTROLLER = False` to start with manual control.
+Use A and D to move, and Q or Esc to quit. In the comparison demo, G resets the rollout to the current real frame.
 
 ## Code layout
 

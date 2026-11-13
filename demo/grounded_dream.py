@@ -74,11 +74,11 @@ if __name__ == '__main__':
     # Set to False to start in a pure dream without a real environment
     GROUND_IN_REALITY = True 
     SHOW_COMPARISON = True  # Show side-by-side comparison
-    USE_CONTROLLER = True # Set to True to use the controller
+    USE_CONTROLLER = False # Set to True to use the controller
     CONTROLLER_PATH = 'models/controller_checkpoints/controller_gen_20_score_768.80.pt'
 
-    RNN_PATH = 'models/rnn/v1-17-08/rnn.lat64.nl.1.h512.seq300.e100.bs128.latent64_vizdoom_1_32_2.5k.17-08.cpt.10.pt'
-    VAE_PATH = 'models/vae/vae.lat64.e100.bs128.inv.vizdoom_1_32_2.5k.14-08_epoch25.pt'
+    RNN_PATH = 'models/rnn.lat64.nl.1.h512.seq100.e100.bs128.latent64_vizdoom_1_32_2.5k.17-08.best.pt'
+    VAE_PATH = 'models/vae.lat64.e100.bs128.inv.vizdoom_1_32_2.5k.14-08_epoch25.pt'
     
     # --- Load Models ---
     print(f"Loading models to {DEVICE}...")
